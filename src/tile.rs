@@ -1113,6 +1113,37 @@ pub fn get_vector_tile_geojson(req: &VectorTileRequest) -> Result<String, String
     serde_json::to_string(&fc).map_err(|e| format!("Serialization error: {}", e))
 }
 
+// ─── Shapefile 瓦片 ───
+
+pub fn get_shapefile_tile_geojson(req: &VectorTileRequest) -> Result<String, String> {
+    let tile_rect = wgs84_tile_rect(req.z, req.x, req.y);
+    let sf = crate::shapefile_reader::get_shapefile(&req.path)?;
+
+    let mut features = Vec::new();
+    for (i, geom) in sf.geometries.iter().enumerate() {
+        if !geom.intersects(&tile_rect) {
+            continue;
+        }
+        let props = sf.attributes.get(i).and_then(|a| a.clone());
+        let gj_geom = geojson::Geometry::try_from(geom)
+            .map_err(|e| format!("Geometry conversion error: {}", e))?;
+        features.push(geojson::Feature {
+            bbox: None,
+            geometry: Some(gj_geom),
+            id: None,
+            properties: props,
+            foreign_members: None,
+        });
+    }
+
+    let fc = geojson::FeatureCollection {
+        bbox: None,
+        features,
+        foreign_members: None,
+    };
+    serde_json::to_string(&fc).map_err(|e| format!("Serialization error: {}", e))
+}
+
 fn resolve_geojson_source_crs(geojson: &geojson::GeoJson) -> Result<crate::reproject::KnownCrs, String> {
     let crs_name = match geojson {
         geojson::GeoJson::FeatureCollection(fc) => fc

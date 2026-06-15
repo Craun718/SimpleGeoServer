@@ -134,7 +134,14 @@ fn file_info(root: &str, filename: &str) -> Result<(String, crate::tile::TileInf
         })?;
         Ok(("raster".to_string(), info))
     } else if crate::is_vector_ext(&ext) {
-        Ok(("vector".to_string(), crate::tile::get_vector_tile_info()))
+        if ext == "shp" {
+            let info = crate::shapefile_reader::get_shapefile_info(&path_str).map_err(|e| {
+                (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
+            })?;
+            Ok(("vector".to_string(), info))
+        } else {
+            Ok(("vector".to_string(), crate::tile::get_vector_tile_info()))
+        }
     } else {
         Err((StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("Unsupported format: .{}", ext)).into_response())
     }
@@ -366,6 +373,10 @@ fn wms_get_map(root: &str, _headers: &HeaderMap, params: &WmsQuery) -> Response 
     let path_str = filepath.to_string_lossy().to_string();
     let ext = file_ext(layer_name).to_lowercase();
 
+    if ext == "shp" {
+        return wms_get_map_shapefile(layer_name, &path_str, params, "");
+    }
+
     if !crate::is_raster_ext(&ext) {
         return ows_exception_xml("LayerNotQueryable", "WMS GetMap only supports raster layers (GeoTIFF)");
     }
@@ -375,8 +386,8 @@ fn wms_get_map(root: &str, _headers: &HeaderMap, params: &WmsQuery) -> Response 
         return ows_exception_xml("InvalidCRS", &format!("Unsupported CRS: {} (only EPSG:3857 is supported)", crs));
     }
 
-    let bbox_str = params.bbox.as_deref().unwrap_or("");
-    let bbox_parts: Vec<f64> = bbox_str
+    let bbox_str_parsed = params.bbox.as_deref().unwrap_or("");
+    let bbox_parts: Vec<f64> = bbox_str_parsed
         .split(',')
         .filter_map(|s| s.trim().parse::<f64>().ok())
         .collect();
@@ -413,6 +424,48 @@ fn wms_get_map(root: &str, _headers: &HeaderMap, params: &WmsQuery) -> Response 
         png_data,
     )
         .into_response()
+}
+
+fn wms_get_map_shapefile(
+    _layer_name: &str,
+    path_str: &str,
+    _params: &WmsQuery,
+    _bbox_str: &str,
+) -> Response {
+    let sf = match crate::shapefile_reader::get_shapefile(path_str) {
+        Ok(s) => s,
+        Err(e) => return ows_exception_xml("InternalError", &e),
+    };
+
+    let mut features = Vec::new();
+    for (i, geom) in sf.geometries.iter().enumerate() {
+        let props = sf.attributes.get(i).and_then(|a| a.clone());
+        let gj_geom = match geojson::Geometry::try_from(geom) {
+            Ok(g) => g,
+            Err(_) => continue,
+        };
+        features.push(geojson::Feature {
+            bbox: None,
+            geometry: Some(gj_geom),
+            id: None,
+            properties: props,
+            foreign_members: None,
+        });
+    }
+
+    let fc = geojson::FeatureCollection {
+        bbox: None,
+        features,
+        foreign_members: None,
+    };
+    match serde_json::to_string(&fc) {
+        Ok(json) => (
+            [(header::CONTENT_TYPE, "application/geo+json")],
+            json,
+        )
+            .into_response(),
+        Err(e) => ows_exception_xml("InternalError", &format!("{}", e)),
+    }
 }
 
 // ─── WMTS ───

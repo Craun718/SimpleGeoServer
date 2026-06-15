@@ -23,6 +23,7 @@ use utoipauto::utoipauto;
 mod protocols;
 mod raster;
 mod reproject;
+mod shapefile_reader;
 mod tile;
 
 #[derive(Parser)]
@@ -142,6 +143,21 @@ async fn list_geo_files(root: Arc<String>) -> Json<Vec<tile::GeoFileInfo>> {
                         info: tile::get_vector_tile_info(),
                     })
                 }
+                "shp" => {
+                    let path_str = path.to_string_lossy().to_string();
+                    match shapefile_reader::get_shapefile_info(&path_str) {
+                        Ok(info) => Some(tile::GeoFileInfo {
+                            name: name.clone(),
+                            path: name.clone(),
+                            data_type: "vector".to_string(),
+                            info,
+                        }),
+                        Err(e) => {
+                            tracing::warn!("Failed to read shapefile {}: {}", name, e);
+                            None
+                        }
+                    }
+                }
                 _ => None,
             };
             if let Some(f) = info {
@@ -185,6 +201,11 @@ async fn get_tile_info(
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
         }
         "geojson" | "json" => Ok(Json(tile::get_vector_tile_info())),
+        "shp" => {
+            shapefile_reader::get_shapefile_info(&path_str)
+                .map(Json)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+        }
         _ => Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             format!("Unsupported format: .{}", ext),
@@ -251,6 +272,12 @@ async fn get_vector_tile(
     let filepath = validate_path(root.as_str(), &filename)?;
     let path_str = filepath.to_string_lossy().to_string();
 
+    let ext = filepath
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
     let req = tile::VectorTileRequest {
         path: path_str,
         z,
@@ -258,8 +285,11 @@ async fn get_vector_tile(
         y,
     };
 
-    let geojson = tile::get_vector_tile_geojson(&req)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let geojson = match ext.as_str() {
+        "shp" => tile::get_shapefile_tile_geojson(&req),
+        _ => tile::get_vector_tile_geojson(&req),
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok((
         [(header::CONTENT_TYPE, "application/geo+json")],
@@ -327,7 +357,7 @@ pub(crate) fn scan_geo_files(root: &str) -> Vec<String> {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_lowercase())
                 .unwrap_or_default();
-            if matches!(ext.as_str(), "tif" | "tiff" | "geojson" | "json") {
+            if matches!(ext.as_str(), "tif" | "tiff" | "geojson" | "json" | "shp") {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     if name != "openapi.json" {
                         files.push(name.to_string());
@@ -345,7 +375,7 @@ pub(crate) fn is_raster_ext(ext: &str) -> bool {
 }
 
 pub(crate) fn is_vector_ext(ext: &str) -> bool {
-    matches!(ext, "geojson" | "json")
+    matches!(ext, "geojson" | "json" | "shp")
 }
 
 fn make_operation_id(base: &str, filename: &str) -> String {
