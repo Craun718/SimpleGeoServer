@@ -286,6 +286,147 @@ async fn get_vector_tile(
 )]
 struct ApiDoc;
 
+fn scan_geo_files(root: &str) -> Vec<String> {
+    let dir = std::path::Path::new(root);
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase())
+                .unwrap_or_default();
+            if matches!(ext.as_str(), "tif" | "tiff" | "geojson" | "json") {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name != "openapi.json" {
+                        files.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn is_raster_ext(ext: &str) -> bool {
+    matches!(ext, "tif" | "tiff")
+}
+
+fn is_vector_ext(ext: &str) -> bool {
+    matches!(ext, "geojson" | "json")
+}
+
+fn make_operation_id(base: &str, filename: &str) -> String {
+    let safe = filename.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+    format!("{}_{}", base, safe)
+}
+
+fn build_dynamic_spec(root: &str) -> serde_json::Value {
+    let geo_files = scan_geo_files(root);
+
+    let mut spec: serde_json::Value =
+        serde_json::to_value(ApiDoc::openapi()).expect("Failed to serialize ApiDoc");
+
+    let file_list_md = geo_files
+        .iter()
+        .map(|f| format!("- `{}`", f))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let description = format!(
+        "Geospatial file server with raster and vector tile serving.\n\n\
+         ### Available Geo Files ({})\n\n{}",
+        geo_files.len(),
+        file_list_md,
+    );
+
+    if let Some(info) = spec.get_mut("info") {
+        info["description"] = serde_json::Value::String(description);
+        info["x-geo-files"] = serde_json::Value::Array(
+            geo_files.iter().map(|f| serde_json::Value::String(f.clone())).collect(),
+        );
+    }
+
+    if geo_files.is_empty() {
+        return spec;
+    }
+
+    // Expand {filename} template paths into concrete per-file paths
+    let Some(paths_obj) = spec.get_mut("paths").and_then(|p| p.as_object_mut()) else {
+        return spec;
+    };
+
+    let template_paths: Vec<String> = paths_obj.keys().filter(|k| k.contains("{filename}")).cloned().collect();
+
+    let mut concrete_paths: Vec<(String, serde_json::Value)> = Vec::new();
+
+    for template_path in &template_paths {
+        let Some(path_item) = paths_obj.get(template_path).cloned() else {
+            continue;
+        };
+
+        for filename in &geo_files {
+            let ext = std::path::Path::new(filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+
+            // Skip filetype-specific endpoints
+            if template_path.contains("/png/") && !is_raster_ext(&ext) {
+                continue;
+            }
+            if template_path.contains("/geojson/") && !is_vector_ext(&ext) {
+                continue;
+            }
+
+            let concrete_path = template_path.replace("{filename}", filename);
+            let mut item = path_item.clone();
+
+            // Customize the operation for this concrete file
+            if let Some(get_op) = item.get_mut("get") {
+                // Remove filename from parameters
+                if let Some(params) = get_op.get_mut("parameters") {
+                    if let Some(arr) = params.as_array_mut() {
+                        arr.retain(|p| p.get("name") != Some(&serde_json::Value::String("filename".to_string())));
+                    }
+                }
+
+                // Set unique operationId
+                let base_op_id = get_op.get("operationId").and_then(|v| v.as_str()).unwrap_or("operation");
+                get_op["operationId"] = serde_json::Value::String(make_operation_id(base_op_id, filename));
+
+                // Set meaningful summary
+                let tag = if template_path.contains("/info") {
+                    "info"
+                } else if template_path.contains("/png/") {
+                    "raster tile (PNG)"
+                } else {
+                    "vector tile (GeoJSON)"
+                };
+                get_op["summary"] = serde_json::Value::String(format!("Get {} for {}", tag, filename));
+            }
+
+            concrete_paths.push((concrete_path, item));
+        }
+
+        // Remove the template path
+        paths_obj.remove(template_path);
+    }
+
+    // Add all concrete paths (sorted by filename)
+    concrete_paths.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, item) in concrete_paths {
+        paths_obj.insert(path, item);
+    }
+
+    spec
+}
+
 // ─── 服务器启动 ───
 
 pub fn run() {
@@ -338,14 +479,28 @@ pub fn run() {
             }),
         );
 
-        // OpenAPI 文档
-        let api_doc = ApiDoc::openapi();
-        if let Ok(json) = api_doc.to_pretty_json() {
+        // OpenAPI 文档（动态生成，包含当前目录文件列表）
+        let spec_value = build_dynamic_spec(&root);
+        if let Ok(json) = serde_json::to_string_pretty(&spec_value) {
             if let Err(e) = std::fs::write("openapi.json", &json) {
                 tracing::warn!("Failed to write openapi.json: {}", e);
             }
         }
-        app = app.merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", api_doc));
+
+        // 打印所有展开的文件路由
+        if let Some(paths) = spec_value.get("paths").and_then(|p| p.as_object()) {
+            let mut file_routes: Vec<&str> = paths.keys().map(|k| k.as_str()).collect();
+            file_routes.sort();
+            for route in &file_routes {
+                if *route != "/api/geo-files" {
+                    tracing::info!("  {}", route);
+                }
+            }
+        }
+
+        app = app.merge(
+            SwaggerUi::new("/docs").external_url_unchecked("/api-docs/openapi.json", spec_value),
+        );
 
         let cache_arc = Arc::new(cli.cache as i64);
         app = app.layer(middleware::from_fn(set_cache_header));
