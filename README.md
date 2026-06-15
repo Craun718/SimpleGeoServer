@@ -101,6 +101,14 @@ Returns a vector tile as GeoJSON FeatureCollection. Supports `.geojson` / `.json
 
 Visit `http://localhost:8080/docs` after starting the server to use Swagger UI.
 
+## Coordinate System
+
+- The tile grid is always **Web Mercator (EPSG:3857)** — all tiles are rendered and served in this projection.
+- Source data with a different CRS is **automatically reprojected** to EPSG:3857 on the fly (no manual conversion needed).
+- Supported source CRS: WGS84 (EPSG:4326), Web Mercator (EPSG:3857), UTM WGS84 (zones 1–60, N/S).
+- Vector tiles: GeoJSON features are reprojected to WGS84 for bounding-box filtering, then served in their original CRS.
+- The `/api/tiles/{filename}/info` endpoint returns the original CRS and WGS84 extent of the source file.
+
 ## Supported File Formats
 
 | Format | Type | Description |

@@ -101,6 +101,14 @@ GET /api/tiles/{filename}/geojson/{z}/{x}/{y}
 
 启动后访问 `http://localhost:8080/docs` 查看 Swagger UI。
 
+## 坐标系
+
+- 瓦片网格始终使用 **Web Mercator (EPSG:3857)** — 所有瓦片均以此投影渲染和发布。
+- 源数据坐标系不同时会**自动重投影**到 EPSG:3857（无需手动转换）。
+- 支持的源坐标系：WGS84 (EPSG:4326)、Web Mercator (EPSG:3857)、UTM WGS84（1–60 带，北/南半球）。
+- 矢量瓦片：GeoJSON 要素先重投影到 WGS84 进行边界框过滤，再以原始 CRS 返回。
+- `/api/tiles/{filename}/info` 接口返回源文件的原始 CRS 及 WGS84 范围。
+
 ## 支持的文件格式
 
 | 格式 | 类型 | 说明 |
