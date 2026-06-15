@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::Path,
-    http::{header, Request, StatusCode},
+    http::{header, HeaderMap, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -20,6 +20,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use utoipauto::utoipauto;
 
+mod protocols;
 mod raster;
 mod reproject;
 mod tile;
@@ -280,7 +281,7 @@ async fn get_vector_tile(
 )]
 struct ApiDoc;
 
-fn validate_path(root: &str, filename: &str) -> Result<std::path::PathBuf, (StatusCode, String)> {
+pub(crate) fn validate_path(root: &str, filename: &str) -> Result<std::path::PathBuf, (StatusCode, String)> {
     let p = std::path::Path::new(filename);
     for c in p.components() {
         match c {
@@ -312,7 +313,7 @@ fn validate_path(root: &str, filename: &str) -> Result<std::path::PathBuf, (Stat
     Ok(file_canonical)
 }
 
-fn scan_geo_files(root: &str) -> Vec<String> {
+pub(crate) fn scan_geo_files(root: &str) -> Vec<String> {
     let dir = std::path::Path::new(root);
     let mut files = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
@@ -339,11 +340,11 @@ fn scan_geo_files(root: &str) -> Vec<String> {
     files
 }
 
-fn is_raster_ext(ext: &str) -> bool {
+pub(crate) fn is_raster_ext(ext: &str) -> bool {
     matches!(ext, "tif" | "tiff")
 }
 
-fn is_vector_ext(ext: &str) -> bool {
+pub(crate) fn is_vector_ext(ext: &str) -> bool {
     matches!(ext, "geojson" | "json")
 }
 
@@ -502,6 +503,64 @@ pub fn run() {
             get({
                 let root = root_arc.clone();
                 move |path| get_vector_tile(root.clone(), path)
+            }),
+        );
+
+        // ─── OGC 协议路由 ───
+
+        app = app.route(
+            "/ogc/wms",
+            get({
+                let root = root_arc.clone();
+                move |headers, query| protocols::wms_handler(root.clone(), headers, query)
+            }),
+        );
+
+        app = app.route(
+            "/ogc/wmts/1.0.0/WMTSCapabilities.xml",
+            get({
+                let root = root_arc.clone();
+                move |headers: HeaderMap| protocols::wmts_capabilities(root.clone(), headers)
+            }),
+        );
+
+        app = app.route(
+            "/ogc/wmts/1.0.0/{layer}/default/GoogleMapsCompatible/{z}/{x}/{y}",
+            get({
+                let root = root_arc.clone();
+                move |path| protocols::wmts_get_tile(root.clone(), path)
+            }),
+        );
+
+        app = app.route(
+            "/ogc/tms/1.0.0/",
+            get({
+                let root = root_arc.clone();
+                move |headers: HeaderMap| protocols::tms_root(root.clone(), headers)
+            }),
+        );
+
+        app = app.route(
+            "/ogc/tms/1.0.0/{layer}",
+            get({
+                let root = root_arc.clone();
+                move |headers: HeaderMap, path: Path<String>| protocols::tms_layer(root.clone(), headers, path)
+            }),
+        );
+
+        app = app.route(
+            "/ogc/tms/1.0.0/{layer}/{z}/{x}/{y}",
+            get({
+                let root = root_arc.clone();
+                move |path| protocols::tms_get_tile(root.clone(), path)
+            }),
+        );
+
+        app = app.route(
+            "/ogc/tilejson/{filename}",
+            get({
+                let root = root_arc.clone();
+                move |headers: HeaderMap, path: Path<String>| protocols::tilejson(root.clone(), headers, path)
             }),
         );
 
