@@ -37,7 +37,10 @@ pub struct TileInfo {
     pub data_type: String,
     pub min_zoom: u32,
     pub max_zoom: u32,
+    pub crs: String,
     pub extent: [f64; 4],
+    pub native_crs: String,
+    pub native_extent: [f64; 4],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -969,11 +972,24 @@ pub fn get_raster_tile_info(path: &str) -> Result<TileInfo, String> {
         22
     };
 
+    let native_crs = crate::raster::crs_string_from_geo_key(&raster.geo_key);
+
+    let nc = &raster.native_corners;
+    let native_extent = [
+        nc[0].0.min(nc[1].0).min(nc[2].0).min(nc[3].0),
+        nc[0].1.min(nc[1].1).min(nc[2].1).min(nc[3].1),
+        nc[0].0.max(nc[1].0).max(nc[2].0).max(nc[3].0),
+        nc[0].1.max(nc[1].1).max(nc[2].1).max(nc[3].1),
+    ];
+
     Ok(TileInfo {
         data_type: "raster".to_string(),
         min_zoom: 0,
         max_zoom: max_zoom.min(22),
+        crs: "EPSG:4326".to_string(),
         extent: extent_wgs84,
+        native_crs,
+        native_extent,
     })
 }
 
@@ -982,6 +998,9 @@ pub fn get_vector_tile_info() -> TileInfo {
         data_type: "vector".to_string(),
         min_zoom: 0,
         max_zoom: 22,
+        crs: "EPSG:4326".to_string(),
         extent: [-C, -C, C, C],
+        native_crs: "EPSG:4326".to_string(),
+        native_extent: [-C, -C, C, C],
     }
 }
