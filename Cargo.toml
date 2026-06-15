@@ -2,6 +2,10 @@
 name = "SimpleGeoServer"
 version = "0.1.0"
 edition = "2024"
+description = "A simple HTTP static file server with geospatial tile serving (raster & vector)"
+license = "Apache-2.0"
+repository = "https://github.com/Craun718/SimpleGeoServer"
+readme = "README.md"
 
 [lib]
 name = "simple_geo_server"
