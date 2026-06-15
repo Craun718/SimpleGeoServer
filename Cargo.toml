@@ -1,11 +1,17 @@
 [package]
-name = "SimpleGeoServer"
+name = "simple-geo-server"
+authors = ["Craun718 <natsukawa247@outlook.com>"]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 description = "A simple HTTP static file server with geospatial tile serving (raster & vector)"
 license = "Apache-2.0"
 repository = "https://github.com/Craun718/SimpleGeoServer"
 readme = "README.md"
+homepage = "https://github.com/Craun718/SimpleGeoServer"
+keywords = ["geo", "tile", "geotiff", "geojson", "static-file-server"]
+categories = ["command-line-utilities", "web-programming::http-server"]
+exclude = [".gitignore"]
 
 [lib]
 name = "simple_geo_server"
