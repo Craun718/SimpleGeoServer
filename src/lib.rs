@@ -169,10 +169,7 @@ async fn get_tile_info(
     root: Arc<String>,
     Path(filename): Path<String>,
 ) -> Result<Json<tile::TileInfo>, (StatusCode, String)> {
-    let filepath = std::path::Path::new(root.as_str()).join(&filename);
-    if !filepath.exists() {
-        return Err((StatusCode::NOT_FOUND, format!("File not found: {}", filename)));
-    }
+    let filepath = validate_path(root.as_str(), &filename)?;
     let path_str = filepath.to_string_lossy().to_string();
     let ext = filepath
         .extension()
@@ -214,10 +211,7 @@ async fn get_raster_tile(
     root: Arc<String>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
 ) -> Result<Response, (StatusCode, String)> {
-    let filepath = std::path::Path::new(root.as_str()).join(&filename);
-    if !filepath.exists() {
-        return Err((StatusCode::NOT_FOUND, format!("File not found: {}", filename)));
-    }
+    let filepath = validate_path(root.as_str(), &filename)?;
     let path_str = filepath.to_string_lossy().to_string();
 
     let raster = tile::get_raster(&path_str)
@@ -253,10 +247,7 @@ async fn get_vector_tile(
     root: Arc<String>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
 ) -> Result<Response, (StatusCode, String)> {
-    let filepath = std::path::Path::new(root.as_str()).join(&filename);
-    if !filepath.exists() {
-        return Err((StatusCode::NOT_FOUND, format!("File not found: {}", filename)));
-    }
+    let filepath = validate_path(root.as_str(), &filename)?;
     let path_str = filepath.to_string_lossy().to_string();
 
     let req = tile::VectorTileRequest {
@@ -288,6 +279,38 @@ async fn get_vector_tile(
     ),
 )]
 struct ApiDoc;
+
+fn validate_path(root: &str, filename: &str) -> Result<std::path::PathBuf, (StatusCode, String)> {
+    let p = std::path::Path::new(filename);
+    for c in p.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                return Err((StatusCode::BAD_REQUEST, "Path traversal detected".into()));
+            }
+            std::path::Component::RootDir => {
+                return Err((StatusCode::BAD_REQUEST, "Absolute path not allowed".into()));
+            }
+            _ => {}
+        }
+    }
+
+    let filepath = std::path::Path::new(root).join(filename);
+    if !filepath.exists() {
+        return Err((StatusCode::NOT_FOUND, format!("File not found: {}", filename)));
+    }
+
+    let root_canonical = std::path::Path::new(root)
+        .canonicalize()
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Invalid root directory".into()))?;
+    let file_canonical = filepath
+        .canonicalize()
+        .map_err(|_| (StatusCode::NOT_FOUND, format!("File not found: {}", filename)))?;
+    if !file_canonical.starts_with(&root_canonical) {
+        return Err((StatusCode::BAD_REQUEST, "Path traversal detected".into()));
+    }
+
+    Ok(file_canonical)
+}
 
 fn scan_geo_files(root: &str) -> Vec<String> {
     let dir = std::path::Path::new(root);
