@@ -109,6 +109,18 @@ Visit `http://localhost:8080/docs` after starting the server to use Swagger UI.
 - Vector tiles: GeoJSON features are reprojected to WGS84 for bounding-box filtering, then served in their original CRS.
 - The `/api/tiles/{filename}/info` endpoint returns the original CRS and WGS84 extent of the source file.
 
+## Supported Tile Protocols
+
+| Protocol | Endpoint | Tile Scheme | Output Format |
+|----------|----------|-------------|---------------|
+| Internal REST API (XYZ) | `/api/tiles/{filename}/png/{z}/{x}/{y}` | Slippy Map (XYZ) | PNG / GeoJSON |
+| OGC WMS 1.3.0 | `/ogc/wms?SERVICE=WMS&...` | Arbitrary BBOX | PNG / GeoJSON |
+| OGC WMTS 1.0.0 | `/ogc/wmts/1.0.0/{layer}/default/GoogleMapsCompatible/{z}/{x}/{y}` | GoogleMapsCompatible (XYZ) | PNG |
+| OGC TMS 1.0.0 | `/ogc/tms/1.0.0/{layer}/{z}/{x}/{y}` | TMS (Y flipped) | PNG |
+| TileJSON 3.0.0 | `/ogc/tilejson/{filename}` | XYZ metadata | JSON |
+
+All OGC tile protocols are implemented in src/protocols.rs. WMS and WMTS follow the OGC 1.3.0 and 1.0.0 standards respectively. TMS follows the OSGeo TMS 1.0.0 specification. TileJSON provides tile metadata in the standard 3.0.0 format.
+
 ## Supported File Formats
 
 | Format | Type | Description |

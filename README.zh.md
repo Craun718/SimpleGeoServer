@@ -109,6 +109,18 @@ GET /api/tiles/{filename}/geojson/{z}/{x}/{y}
 - 矢量瓦片：GeoJSON 要素先重投影到 WGS84 进行边界框过滤，再以原始 CRS 返回。
 - `/api/tiles/{filename}/info` 接口返回源文件的原始 CRS 及 WGS84 范围。
 
+## 支持的切片协议
+
+| 协议 | 端点 | 瓦片方案 | 输出格式 |
+|------|------|----------|----------|
+| 内部 REST API (XYZ) | `/api/tiles/{filename}/png/{z}/{x}/{y}` | Slippy Map (XYZ) | PNG / GeoJSON |
+| OGC WMS 1.3.0 | `/ogc/wms?SERVICE=WMS&...` | 任意 BBOX | PNG / GeoJSON |
+| OGC WMTS 1.0.0 | `/ogc/wmts/1.0.0/{layer}/default/GoogleMapsCompatible/{z}/{x}/{y}` | GoogleMapsCompatible (XYZ) | PNG |
+| OGC TMS 1.0.0 | `/ogc/tms/1.0.0/{layer}/{z}/{x}/{y}` | TMS（Y 轴翻转） | PNG |
+| TileJSON 3.0.0 | `/ogc/tilejson/{filename}` | XYZ 元数据 | JSON |
+
+所有 OGC 切片协议实现在 src/protocols.rs 中。WMS 和 WMTS 分别遵循 OGC 1.3.0 和 1.0.0 标准，TMS 遵循 OSGeo TMS 1.0.0 规范，TileJSON 以标准 3.0.0 格式提供瓦片元数据。
+
 ## 支持的文件格式
 
 | 格式 | 类型 | 说明 |
