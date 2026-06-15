@@ -1,9 +1,10 @@
 use geo::{Coord, Geometry, MapCoords};
 use std::io::{Read, Seek};
+use tiff::TiffResult;
 use tiff::decoder::Decoder;
 use tiff::tags::Tag;
-use tiff::TiffResult;
 
+// https://zh.wikipedia.org/wiki/Web%E5%A2%A8%E5%8D%A1%E6%89%98%E6%8A%95%E5%BD%B1
 const WGS84_A: f64 = 6378137.0;
 const WGS84_F: f64 = 1.0 / 298.257223563;
 const WGS84_E2: f64 = 2.0 * WGS84_F - WGS84_F * WGS84_F;
@@ -72,17 +73,14 @@ pub fn read_geo_key_info<R: Read + Seek>(decoder: &mut Decoder<R>) -> TiffResult
             2048 => info.geographic_type = Some(value_or_offset),
             3076 => {
                 if count > 0 && tiff_tag_location == 0 {
-                    info.proj_nat_origin_long =
-                        Some(value_or_offset as i16 as f64 * 1e-6);
+                    info.proj_nat_origin_long = Some(value_or_offset as i16 as f64 * 1e-6);
                 } else if tiff_tag_location != 0 {
-                    info.proj_nat_origin_long =
-                        Some(value_or_offset as i16 as f64 * 1e-6);
+                    info.proj_nat_origin_long = Some(value_or_offset as i16 as f64 * 1e-6);
                 }
             }
             3075 => {
                 if count > 0 && tiff_tag_location == 0 {
-                    info.proj_nat_origin_lat =
-                        Some(value_or_offset as i16 as f64 * 1e-6);
+                    info.proj_nat_origin_lat = Some(value_or_offset as i16 as f64 * 1e-6);
                 }
             }
             3082 => {
@@ -92,8 +90,7 @@ pub fn read_geo_key_info<R: Read + Seek>(decoder: &mut Decoder<R>) -> TiffResult
                 info.proj_false_northing = Some(value_or_offset as i16 as f64);
             }
             3092 => {
-                info.proj_scale_at_nat_origin =
-                    Some(value_or_offset as i16 as f64 * 1e-6);
+                info.proj_scale_at_nat_origin = Some(value_or_offset as i16 as f64 * 1e-6);
             }
             3079 => info.proj_coord_trans = Some(value_or_offset),
             _ => {}
@@ -194,9 +191,7 @@ pub fn known_crs_coord_to_wgs84(x: f64, y: f64, crs: KnownCrs) -> Option<(f64, f
             let lat = lat_rad.to_degrees();
             Some((lng, lat))
         }
-        KnownCrs::UtmWgs84 { zone, northern } => {
-            utm_to_wgs84(x, y, zone, northern)
-        }
+        KnownCrs::UtmWgs84 { zone, northern } => utm_to_wgs84(x, y, zone, northern),
     }
 }
 
@@ -214,12 +209,7 @@ pub fn known_crs_geometry_to_wgs84(
     }
 }
 
-fn utm_to_wgs84(
-    easting: f64,
-    northing: f64,
-    zone: u8,
-    northern: bool,
-) -> Option<(f64, f64)> {
+fn utm_to_wgs84(easting: f64, northing: f64, zone: u8, northern: bool) -> Option<(f64, f64)> {
     let k0 = 0.9996;
     let a = WGS84_A;
     let e2 = WGS84_E2;
@@ -257,26 +247,30 @@ fn utm_to_wgs84(
             * (d * d / 2.0
                 - (5.0 + 3.0 * t1 + 10.0 * c1 - 4.0 * c1 * c1 - 9.0 * e2) * d * d * d * d / 24.0
                 + (61.0 + 90.0 * t1 + 298.0 * c1 + 45.0 * t1 * t1 - 252.0 * e2 - 3.0 * c1 * c1)
-                    * d * d * d * d * d * d
+                    * d
+                    * d
+                    * d
+                    * d
+                    * d
+                    * d
                     / 720.0);
 
     let lng_origin = ((zone as i32) - 1) * 6 - 180 + 3;
     let lng = lng_origin as f64
-        + (d
-            - (1.0 + 2.0 * t1 + c1) * d * d * d / 6.0
+        + (d - (1.0 + 2.0 * t1 + c1) * d * d * d / 6.0
             + (5.0 - 2.0 * c1 + 28.0 * t1 - 3.0 * c1 * c1 + 8.0 * e2 + 24.0 * t1 * t1)
-                * d * d * d * d * d
+                * d
+                * d
+                * d
+                * d
+                * d
                 / 120.0)
             / cos1;
 
     Some((lng, lat.to_degrees()))
 }
 
-pub fn wgs84_to_native_crs(
-    lng: f64,
-    lat: f64,
-    geo_key: &GeoKeyInfo,
-) -> Option<(f64, f64)> {
+pub fn wgs84_to_native_crs(lng: f64, lat: f64, geo_key: &GeoKeyInfo) -> Option<(f64, f64)> {
     if geo_key.model_type == Some(2) {
         return Some((lng, lat));
     }
@@ -319,30 +313,35 @@ pub fn transverse_mercator_forward(
     let a4 = (15.0 * e2 * e2 / 256.0 + 45.0 * e2 * e2 * e2 / 1024.0) * a;
     let a6 = 35.0 * e2 * e2 * e2 / 3072.0 * a;
 
-    let m = a0 * origin_lat_rad
-        - a2 * (2.0 * origin_lat_rad).sin()
+    let m = a0 * origin_lat_rad - a2 * (2.0 * origin_lat_rad).sin()
         + a4 * (4.0 * origin_lat_rad).sin()
         - a6 * (6.0 * origin_lat_rad).sin();
 
     let m_south = m;
-    let m_north = a0 * lat_rad
-        - a2 * (2.0 * lat_rad).sin()
-        + a4 * (4.0 * lat_rad).sin()
+    let m_north = a0 * lat_rad - a2 * (2.0 * lat_rad).sin() + a4 * (4.0 * lat_rad).sin()
         - a6 * (6.0 * lat_rad).sin();
 
     let northing = k0
         * (m_north - m_south
             + n * tan_lat * d_lng * d_lng * cos_lat / 2.0
-            + n * tan_lat * (5.0 - t + 9.0 * c + 4.0 * c * c) * d_lng * d_lng * d_lng * d_lng
+            + n * tan_lat
+                * (5.0 - t + 9.0 * c + 4.0 * c * c)
+                * d_lng
+                * d_lng
+                * d_lng
+                * d_lng
                 * cos_lat
                 / 24.0);
 
     let easting = k0
         * (n * d_lng * cos_lat
             + n * (1.0 - t + c) * d_lng * d_lng * d_lng * cos_lat / 6.0
-            + n
-                * (5.0 - 18.0 * t + t * t + 72.0 * c - 58.0 * e2)
-                * d_lng * d_lng * d_lng * d_lng * d_lng
+            + n * (5.0 - 18.0 * t + t * t + 72.0 * c - 58.0 * e2)
+                * d_lng
+                * d_lng
+                * d_lng
+                * d_lng
+                * d_lng
                 * cos_lat
                 / 120.0);
 
@@ -471,7 +470,10 @@ fn determine_crs_from_geo_key(geo_key: &GeoKeyInfo) -> Option<KnownCrs> {
 
     let zone = ((origin_lng + 180.0) / 6.0).ceil() as u8;
     if (1..=60).contains(&zone) && origin_lng.abs() <= 180.0 {
-        return Some(KnownCrs::UtmWgs84 { zone, northern: true });
+        return Some(KnownCrs::UtmWgs84 {
+            zone,
+            northern: true,
+        });
     }
 
     None

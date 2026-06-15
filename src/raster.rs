@@ -2,9 +2,10 @@ use std::fs::File;
 use std::io::BufReader;
 use tiff::decoder::Decoder;
 use tiff::tags::Tag;
+use utoipa::ToSchema;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct BandInfo {
     pub index: u32,
     pub min: f64,

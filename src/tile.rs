@@ -7,6 +7,7 @@ use geo::Intersects;
 use image::{ImageEncoder, RgbaImage};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use tiff::decoder::{ChunkType, Decoder, Limits};
 
 const R: f64 = 6378137.0;
@@ -31,7 +32,7 @@ pub struct VectorTileRequest {
     pub y: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TileInfo {
     pub data_type: String,
     pub min_zoom: u32,
@@ -39,7 +40,7 @@ pub struct TileInfo {
     pub extent: [f64; 4],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GeoFileInfo {
     pub name: String,
     pub path: String,

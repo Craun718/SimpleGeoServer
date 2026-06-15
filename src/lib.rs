@@ -16,6 +16,9 @@ use tower_http::{
     services::ServeDir,
     trace::TraceLayer,
 };
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+use utoipauto::utoipauto;
 
 mod raster;
 mod reproject;
@@ -83,6 +86,14 @@ async fn filter_dotfiles(
 
 // ─── 切片服务处理器 ───
 
+#[utoipa::path(
+    get,
+    path = "/api/geo-files",
+    responses(
+        (status = 200, description = "List of available geo files", body = Vec<crate::tile::GeoFileInfo>),
+    ),
+    tag = "Files",
+)]
 async fn list_geo_files(root: Arc<String>) -> Json<Vec<tile::GeoFileInfo>> {
     let mut files = Vec::new();
     let dir = std::path::Path::new(root.as_str());
@@ -137,6 +148,20 @@ async fn list_geo_files(root: Arc<String>) -> Json<Vec<tile::GeoFileInfo>> {
     Json(files)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/tiles/{filename}/info",
+    params(
+        ("filename" = String, Path, description = "File name"),
+    ),
+    responses(
+        (status = 200, description = "Tile metadata", body = crate::tile::TileInfo),
+        (status = 404, description = "File not found"),
+        (status = 415, description = "Unsupported format"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "Files",
+)]
 async fn get_tile_info(
     root: Arc<String>,
     Path(filename): Path<String>,
@@ -166,6 +191,22 @@ async fn get_tile_info(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/tiles/{filename}/png/{z}/{x}/{y}",
+    params(
+        ("filename" = String, Path, description = "File name"),
+        ("z" = u32, Path, description = "Zoom level"),
+        ("x" = u32, Path, description = "Tile X coordinate"),
+        ("y" = u32, Path, description = "Tile Y coordinate"),
+    ),
+    responses(
+        (status = 200, description = "PNG tile image", content_type = "image/png"),
+        (status = 404, description = "File not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "Tiles",
+)]
 async fn get_raster_tile(
     root: Arc<String>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
@@ -189,6 +230,22 @@ async fn get_raster_tile(
         .into_response())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/tiles/{filename}/geojson/{z}/{x}/{y}",
+    params(
+        ("filename" = String, Path, description = "File name"),
+        ("z" = u32, Path, description = "Zoom level"),
+        ("x" = u32, Path, description = "Tile X coordinate"),
+        ("y" = u32, Path, description = "Tile Y coordinate"),
+    ),
+    responses(
+        (status = 200, description = "GeoJSON FeatureCollection", content_type = "application/geo+json"),
+        (status = 404, description = "File not found"),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "Tiles",
+)]
 async fn get_vector_tile(
     root: Arc<String>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
@@ -215,6 +272,19 @@ async fn get_vector_tile(
     )
         .into_response())
 }
+
+// ─── OpenAPI 文档 ───
+
+#[utoipauto]
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "SimpleGeoServer API",
+        description = "Geospatial file server with raster and vector tile serving",
+        version = "0.1.0",
+    ),
+)]
+struct ApiDoc;
 
 // ─── 服务器启动 ───
 
@@ -268,6 +338,15 @@ pub fn run() {
             }),
         );
 
+        // OpenAPI 文档
+        let api_doc = ApiDoc::openapi();
+        if let Ok(json) = api_doc.to_pretty_json() {
+            if let Err(e) = std::fs::write("openapi.json", &json) {
+                tracing::warn!("Failed to write openapi.json: {}", e);
+            }
+        }
+        app = app.merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", api_doc));
+
         let cache_arc = Arc::new(cli.cache as i64);
         app = app.layer(middleware::from_fn(set_cache_header));
         app = app.layer(Extension(cache_arc));
@@ -293,6 +372,7 @@ pub fn run() {
         tracing::info!("SimpleGeoServer started on http://{}", addr);
         tracing::info!("Serving files from {}", root);
         tracing::info!("Geo tile API available at http://{}/api/geo-files", addr);
+        tracing::info!("API documentation at http://{}/docs", addr);
 
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         axum::serve(listener, app).await.unwrap();

@@ -1,0 +1,306 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SimpleGeoServer API",
+    "description": "Geospatial file server with raster and vector tile serving",
+    "license": {
+      "name": ""
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/geo-files": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "operationId": "list_geo_files",
+        "responses": {
+          "200": {
+            "description": "List of available geo files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GeoFileInfo"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tiles/{filename}/geojson/{z}/{x}/{y}": {
+      "get": {
+        "tags": [
+          "Tiles"
+        ],
+        "operationId": "get_vector_tile",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "description": "File name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "z",
+            "in": "path",
+            "description": "Zoom level",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "x",
+            "in": "path",
+            "description": "Tile X coordinate",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "description": "Tile Y coordinate",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "GeoJSON FeatureCollection",
+            "content": {
+              "application/geo+json": {}
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/tiles/{filename}/info": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "operationId": "get_tile_info",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "description": "File name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tile metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TileInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "415": {
+            "description": "Unsupported format"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/tiles/{filename}/png/{z}/{x}/{y}": {
+      "get": {
+        "tags": [
+          "Tiles"
+        ],
+        "operationId": "get_raster_tile",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "description": "File name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "z",
+            "in": "path",
+            "description": "Zoom level",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "x",
+            "in": "path",
+            "description": "Tile X coordinate",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "description": "Tile Y coordinate",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PNG tile image",
+            "content": {
+              "image/png": {}
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BandInfo": {
+        "type": "object",
+        "required": [
+          "index",
+          "min",
+          "max",
+          "mean",
+          "std_dev"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "max": {
+            "type": "number",
+            "format": "double"
+          },
+          "mean": {
+            "type": "number",
+            "format": "double"
+          },
+          "min": {
+            "type": "number",
+            "format": "double"
+          },
+          "no_data": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "std_dev": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "GeoFileInfo": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "data_type",
+          "info"
+        ],
+        "properties": {
+          "data_type": {
+            "type": "string"
+          },
+          "info": {
+            "$ref": "#/components/schemas/TileInfo"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "TileInfo": {
+        "type": "object",
+        "required": [
+          "data_type",
+          "min_zoom",
+          "max_zoom",
+          "extent"
+        ],
+        "properties": {
+          "data_type": {
+            "type": "string"
+          },
+          "extent": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "max_zoom": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "min_zoom": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}
