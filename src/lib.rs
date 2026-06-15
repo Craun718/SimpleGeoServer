@@ -42,6 +42,9 @@ pub struct Cli {
     #[arg(short = 'd', long, default_value = ".")]
     pub root: String,
 
+    #[arg()]
+    pub dir: Option<String>,
+
     #[arg(long, default_value_t = 3600)]
     pub cache: i32,
 
@@ -434,7 +437,7 @@ pub fn run() {
 
     tracing_subscriber::fmt::init();
 
-    let root = cli.root.clone();
+    let root = cli.dir.clone().unwrap_or(cli.root);
     let root_arc = Arc::new(root.clone());
 
     let rt = tokio::runtime::Builder::new_multi_thread()
