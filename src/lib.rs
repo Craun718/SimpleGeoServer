@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::Path,
+    extract::{Path, Query},
     http::{header, HeaderMap, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -8,6 +8,7 @@ use axum::{
     Extension, Json, Router,
 };
 use clap::Parser;
+use serde::Deserialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::{
@@ -20,11 +21,23 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use utoipauto::utoipauto;
 
+#[derive(Deserialize)]
+pub struct TileQueryParams {
+    resampling: Option<String>,
+    stretch: Option<String>,
+    std_dev_factor: Option<f64>,
+}
+
+mod batch_render;
+#[cfg(feature = "gpu")]
+mod gpu_renderer;
 mod protocols;
 mod raster;
 mod reproject;
+mod resample;
 mod shapefile_reader;
 mod tile;
+mod tile_cache;
 
 #[derive(Parser)]
 #[command(name = "SimpleGeoServer", about = "A simple HTTP static file server with tile serving")]
@@ -135,7 +148,7 @@ async fn list_geo_files(root: Arc<String>) -> Json<Vec<tile::GeoFileInfo>> {
                         }
                     }
                 }
-                "geojson" | "json" => {
+                "geojson" | "json" | "wkt" | "kml" | "kmz" => {
                     Some(tile::GeoFileInfo {
                         name: name.clone(),
                         path: name.clone(),
@@ -200,7 +213,7 @@ async fn get_tile_info(
                 .map(Json)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
         }
-        "geojson" | "json" => Ok(Json(tile::get_vector_tile_info())),
+        "geojson" | "json" | "wkt" | "kml" | "kmz" => Ok(Json(tile::get_vector_tile_info())),
         "shp" => {
             shapefile_reader::get_shapefile_info(&path_str)
                 .map(Json)
@@ -232,15 +245,62 @@ async fn get_tile_info(
 async fn get_raster_tile(
     root: Arc<String>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
+    Query(params): Query<TileQueryParams>,
 ) -> Result<Response, (StatusCode, String)> {
     let filepath = validate_path(root.as_str(), &filename)?;
     let path_str = filepath.to_string_lossy().to_string();
 
+    let resampling = params.resampling.as_deref().map(resample::ResamplingMode::from_str).unwrap_or(resample::ResamplingMode::Nearest);
+
+    // Check L2 (memory) cache
+    let cache_key = tile_cache::TileCacheKey::new(&path_str, z, x, y, resampling);
+    {
+        let mut l2 = tile_cache::L2_CACHE.lock().unwrap();
+        if let Some(cached) = l2.get(&cache_key) {
+            tile_cache::record_l2_hit();
+            return Ok((
+                [(header::CONTENT_TYPE, "image/png")],
+                cached.clone(),
+            )
+                .into_response());
+        }
+    }
+
+    // Check L3 (disk) cache
+    if let Some(cached) = tile_cache::disk_cache_get(&path_str, z, x, y, resampling) {
+        tile_cache::record_l3_hit();
+        // Promote to L2
+        let mut l2 = tile_cache::L2_CACHE.lock().unwrap();
+        l2.insert(cache_key, cached.clone());
+        return Ok((
+            [(header::CONTENT_TYPE, "image/png")],
+            cached,
+        )
+            .into_response());
+    }
+
+    tile_cache::record_miss();
+
     let raster = tile::get_raster(&path_str)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let (png_data, _rendered) = tile::render_raster_tile(&raster, z, x, y, 256, &[1, 2, 3])
+    let stretch = params.stretch.as_deref().map(|s| resample::StretchConfig {
+        method: resample::StretchMethod::from_str(s),
+        std_dev_factor: params.std_dev_factor,
+    });
+
+    let (png_data, _rendered) = tile::render_raster_tile_ex(
+        &raster, z, x, y, 256, &[1, 2, 3],
+        Some(resampling), stretch.as_ref(),
+    )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Store in caches
+    tile_cache::disk_cache_set(&path_str, z, x, y, resampling, &png_data);
+    {
+        let mut l2 = tile_cache::L2_CACHE.lock().unwrap();
+        l2.insert(cache_key, png_data.clone());
+    }
 
     Ok((
         [(header::CONTENT_TYPE, "image/png")],
@@ -287,6 +347,8 @@ async fn get_vector_tile(
 
     let geojson = match ext.as_str() {
         "shp" => tile::get_shapefile_tile_geojson(&req),
+        "wkt" => tile::get_wkt_tile_geojson(&req),
+        "kml" | "kmz" => tile::get_kml_tile_geojson(&req),
         _ => tile::get_vector_tile_geojson(&req),
     }
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -296,6 +358,88 @@ async fn get_vector_tile(
         geojson,
     )
         .into_response())
+}
+
+// ─── WebP 瓦片 ───
+
+async fn get_raster_tile_webp(
+    root: Arc<String>,
+    Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
+) -> Result<Response, (StatusCode, String)> {
+    let filepath = validate_path(root.as_str(), &filename)?;
+    let path_str = filepath.to_string_lossy().to_string();
+
+    let raster = tile::get_raster(&path_str)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let (webp_data, _rendered) = tile::render_raster_tile_webp(&raster, z, x, y, 256, &[1, 2, 3])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok((
+        [(header::CONTENT_TYPE, "image/webp")],
+        webp_data,
+    )
+        .into_response())
+}
+
+// ─── 批量渲染 ───
+
+#[derive(Deserialize)]
+pub struct BatchTileReq {
+    pub z: u32,
+    pub x: u32,
+    pub y: u32,
+}
+
+#[derive(Deserialize)]
+pub struct BatchRequest {
+    pub filename: String,
+    pub tiles: Vec<BatchTileReq>,
+    pub resampling: Option<String>,
+    pub stretch: Option<String>,
+    pub bands: Option<Vec<u32>>,
+}
+
+async fn batch_tiles(
+    root: Arc<String>,
+    Json(req): Json<BatchRequest>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
+    let filepath = validate_path(root.as_str(), &req.filename)?;
+    let path_str = filepath.to_string_lossy().to_string();
+    let resampling = req.resampling.as_deref().map(resample::ResamplingMode::from_str).unwrap_or(resample::ResamplingMode::Nearest);
+    let bands = req.bands.clone().unwrap_or_else(|| vec![1, 2, 3]);
+    let stretch = req.stretch.as_deref().map(|s| resample::StretchConfig {
+        method: resample::StretchMethod::from_str(s),
+        std_dev_factor: None,
+    });
+
+    let jobs: Vec<batch_render::BatchTileJob> = req.tiles.iter().map(|t| batch_render::BatchTileJob {
+        path: path_str.clone(),
+        z: t.z,
+        x: t.x,
+        y: t.y,
+        bands: bands.clone(),
+        resampling,
+        stretch: stretch.clone(),
+        priority: t.z,
+    }).collect();
+
+    let results = batch_render::render_tiles_parallel(jobs, 4);
+    let json_results: Vec<serde_json::Value> = results.into_iter().map(|(_, r)| match r {
+        Ok(tile) => {
+            serde_json::json!({
+                "status": "ok",
+                "z": tile.z,
+                "x": tile.x,
+                "y": tile.y,
+                "bytes": tile.data.len(),
+                "rendered": tile.rendered,
+            })
+        }
+        Err(e) => serde_json::json!({"status": "error", "error": e}),
+    }).collect();
+
+    Ok(Json(json_results))
 }
 
 // ─── OpenAPI 文档 ───
@@ -357,7 +501,7 @@ pub(crate) fn scan_geo_files(root: &str) -> Vec<String> {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_lowercase())
                 .unwrap_or_default();
-            if matches!(ext.as_str(), "tif" | "tiff" | "geojson" | "json" | "shp") {
+            if matches!(ext.as_str(), "tif" | "tiff" | "geojson" | "json" | "shp" | "wkt" | "kml" | "kmz") {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     if name != "openapi.json" {
                         files.push(name.to_string());
@@ -375,7 +519,7 @@ pub(crate) fn is_raster_ext(ext: &str) -> bool {
 }
 
 pub(crate) fn is_vector_ext(ext: &str) -> bool {
-    matches!(ext, "geojson" | "json" | "shp")
+    matches!(ext, "geojson" | "json" | "shp" | "wkt" | "kml" | "kmz")
 }
 
 fn make_operation_id(base: &str, filename: &str) -> String {
@@ -524,7 +668,7 @@ pub fn run() {
             "/api/tiles/{filename}/png/{z}/{x}/{y}",
             get({
                 let root = root_arc.clone();
-                move |path| get_raster_tile(root.clone(), path)
+                move |path, query| get_raster_tile(root.clone(), path, query)
             }),
         );
 
@@ -533,6 +677,22 @@ pub fn run() {
             get({
                 let root = root_arc.clone();
                 move |path| get_vector_tile(root.clone(), path)
+            }),
+        );
+
+        app = app.route(
+            "/api/tiles/{filename}/webp/{z}/{x}/{y}",
+            get({
+                let root = root_arc.clone();
+                move |path| get_raster_tile_webp(root.clone(), path)
+            }),
+        );
+
+        app = app.route(
+            "/api/batch-tiles",
+            axum::routing::post({
+                let root = root_arc.clone();
+                move |body| batch_tiles(root.clone(), body)
             }),
         );
 

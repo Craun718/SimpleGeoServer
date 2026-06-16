@@ -1,19 +1,30 @@
-use geo::{Coord, Geometry, MapCoords};
+use std::collections::HashMap;
 use std::io::{Read, Seek};
-use tiff::TiffResult;
+use std::sync::Mutex;
+
+use geo::{Coord, Geometry, MapCoords};
+use geodesy::prelude::*;
+use once_cell::sync::Lazy;
 use tiff::decoder::Decoder;
 use tiff::tags::Tag;
-
-// https://zh.wikipedia.org/wiki/Web%E5%A2%A8%E5%8D%A1%E6%89%98%E6%8A%95%E5%BD%B1
-const WGS84_A: f64 = 6378137.0;
-const WGS84_F: f64 = 1.0 / 298.257223563;
-const WGS84_E2: f64 = 2.0 * WGS84_F - WGS84_F * WGS84_F;
+use tiff::TiffResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnownCrs {
     Wgs84,
     WebMercator,
-    UtmWgs84 { zone: u8, northern: bool },
+    Epsg(u16),
+}
+
+impl KnownCrs {
+    #[allow(dead_code)]
+    pub fn epsg_code(&self) -> Option<u16> {
+        match self {
+            KnownCrs::Wgs84 => Some(4326),
+            KnownCrs::WebMercator => Some(3857),
+            KnownCrs::Epsg(code) => Some(*code),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +56,74 @@ impl Default for GeoKeyInfo {
     }
 }
 
+// ─── Geodesy Engine ───
+
+struct GeodesyEngine {
+    ctx: Minimal,
+    cache: HashMap<String, OpHandle>,
+}
+
+impl GeodesyEngine {
+    fn new() -> Self {
+        Self {
+            ctx: Minimal::new(),
+            cache: HashMap::new(),
+        }
+    }
+
+    fn apply(
+        &mut self,
+        op_str: &str,
+        dir: Direction,
+        coords: &mut dyn CoordinateSet,
+    ) -> Result<(), Error> {
+        let handle = self.cache.get(op_str).copied().unwrap_or_else(|| {
+            let h = self.ctx.op(op_str).expect("failed to register geodesy op");
+            self.cache.insert(op_str.to_string(), h);
+            h
+        });
+        self.ctx.apply(handle, dir, coords).map(|_| ())
+    }
+}
+
+static GEODESY: Lazy<Mutex<GeodesyEngine>> = Lazy::new(|| Mutex::new(GeodesyEngine::new()));
+
+fn wgs84_to_crs(lng_deg: f64, lat_deg: f64, epsg: u16) -> Option<(f64, f64)> {
+    if epsg == 4326 {
+        return Some((lng_deg, lat_deg));
+    }
+    if epsg == 3857 {
+        let mut coords = [Coor2D::raw(lng_deg.to_radians(), lat_deg.to_radians())];
+        GEODESY.lock().unwrap().apply("webmerc", Fwd, &mut coords).ok()?;
+        return Some(coords[0].xy());
+    }
+    let def = crs_definitions::from_code(epsg)?;
+    let op_str = geodesy::authoring::parse_proj(def.proj4).ok()?;
+    let mut coords = [Coor2D::raw(lng_deg.to_radians(), lat_deg.to_radians())];
+    GEODESY.lock().unwrap().apply(&op_str, Fwd, &mut coords).ok()?;
+    Some(coords[0].xy())
+}
+
+fn crs_to_wgs84(x: f64, y: f64, epsg: u16) -> Option<(f64, f64)> {
+    if epsg == 4326 {
+        return Some((x, y));
+    }
+    if epsg == 3857 {
+        let mut coords = [Coor2D::raw(x, y)];
+        GEODESY.lock().unwrap().apply("webmerc", Inv, &mut coords).ok()?;
+        let (lng_rad, lat_rad) = coords[0].xy();
+        return Some((lng_rad.to_degrees(), lat_rad.to_degrees()));
+    }
+    let def = crs_definitions::from_code(epsg)?;
+    let op_str = geodesy::authoring::parse_proj(def.proj4).ok()?;
+    let mut coords = [Coor2D::raw(x, y)];
+    GEODESY.lock().unwrap().apply(&op_str, Inv, &mut coords).ok()?;
+    let (lng_rad, lat_rad) = coords[0].xy();
+    Some((lng_rad.to_degrees(), lat_rad.to_degrees()))
+}
+
+// ─── GeoKey Parsing ───
+
 pub fn read_geo_key_info<R: Read + Seek>(decoder: &mut Decoder<R>) -> TiffResult<GeoKeyInfo> {
     let dir_data: Vec<u16> = match decoder.find_tag(Tag::GeoKeyDirectoryTag)? {
         Some(v) => v.into_u16_vec()?,
@@ -59,422 +138,260 @@ pub fn read_geo_key_info<R: Read + Seek>(decoder: &mut Decoder<R>) -> TiffResult
         return Ok(GeoKeyInfo::default());
     }
 
+    let double_data: Vec<f64> = match decoder.find_tag(Tag::GeoDoubleParamsTag)? {
+        Some(v) => v.into_f64_vec()?,
+        None => Vec::new(),
+    };
+
     let mut info = GeoKeyInfo::default();
     for i in 0..num_keys {
-        let offset = 4 + 4 * i;
-        let key_id = dir_data[offset];
-        let tiff_tag_location = dir_data[offset + 1];
-        let count = dir_data[offset + 2] as usize;
-        let value_or_offset = dir_data[offset + 3];
+        let base = 4 + 4 * i;
+        let key_id = dir_data[base];
+        let tiff_tag_loc = dir_data[base + 1];
+        let count = dir_data[base + 2];
+        let value_or_offset = dir_data[base + 3];
 
         match key_id {
-            1024 => info.model_type = Some(value_or_offset),
-            3072 => info.projected_type = Some(value_or_offset),
-            2048 => info.geographic_type = Some(value_or_offset),
-            3076 => {
-                if count > 0 && tiff_tag_location == 0 {
-                    info.proj_nat_origin_long = Some(value_or_offset as i16 as f64 * 1e-6);
-                } else if tiff_tag_location != 0 {
-                    info.proj_nat_origin_long = Some(value_or_offset as i16 as f64 * 1e-6);
+            1024 if tiff_tag_loc == 0 && count == 1 => info.model_type = Some(value_or_offset),
+            2048 if tiff_tag_loc == 0 && count == 1 => info.geographic_type = Some(value_or_offset),
+            3072 if tiff_tag_loc == 0 && count == 1 => info.projected_type = Some(value_or_offset),
+            3075 if tiff_tag_loc == 0 && count == 1 => info.proj_coord_trans = Some(value_or_offset),
+            3080 | 3081 | 3082 | 3083 | 3092 => {
+                let val = if tiff_tag_loc == 0 && count == 1 {
+                    Some(value_or_offset as f64)
+                } else if tiff_tag_loc == 34736 {
+                    let idx = value_or_offset as usize;
+                    if idx < double_data.len() {
+                        Some(double_data[idx])
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if let Some(v) = val {
+                    match key_id {
+                        3080 => info.proj_nat_origin_long = Some(v),
+                        3081 => info.proj_nat_origin_lat = Some(v),
+                        3082 => info.proj_false_easting = Some(v),
+                        3083 => info.proj_false_northing = Some(v),
+                        3092 => info.proj_scale_at_nat_origin = Some(v),
+                        _ => {}
+                    }
                 }
             }
-            3075 => {
-                if count > 0 && tiff_tag_location == 0 {
-                    info.proj_nat_origin_lat = Some(value_or_offset as i16 as f64 * 1e-6);
-                }
-            }
-            3082 => {
-                info.proj_false_easting = Some(value_or_offset as i16 as f64);
-            }
-            3083 => {
-                info.proj_false_northing = Some(value_or_offset as i16 as f64);
-            }
-            3092 => {
-                info.proj_scale_at_nat_origin = Some(value_or_offset as i16 as f64 * 1e-6);
-            }
-            3079 => info.proj_coord_trans = Some(value_or_offset),
             _ => {}
         }
     }
     Ok(info)
 }
 
+// ─── CRS Parsing ───
+
 pub fn parse_known_crs(name: &str) -> Option<KnownCrs> {
     let upper = name.to_uppercase();
+    let compact: String = upper.chars().filter(|ch| !matches!(ch, ' ' | '_' | '-')).collect();
+    let is_wgs84_family = compact.contains("WGS84") || compact.contains("WGS1984");
 
-    if upper.contains("WGS 84")
-        || upper.contains("WGS84")
-        || upper.contains("GCS_WGS_84")
-        || upper.contains("EPSG:4326")
-        || upper.contains("EPSG:4269")
-        || upper.contains("NAD83")
-        || upper.contains("NAD 83")
-    {
-        if upper.contains("UTM") || upper.contains("ZONE") {
-            return None;
-        } else {
-            return Some(KnownCrs::Wgs84);
-        }
-    }
-
-    if upper.contains("WEB MERCATOR")
-        || upper.contains("WEBMERCATOR")
-        || upper.contains("MERCATOR")
-        || upper.contains("EPSG:3857")
-        || upper.contains("EPSG:900913")
-        || upper.contains("EPSG:102100")
+    if compact.contains("EPSG:3857") || compact.contains("EPSG3857")
+        || compact.contains("WEBMERCATOR") || compact.contains("PSEUDOMERCATOR")
+        || compact.contains("AUXILIARYSPHERE")
     {
         return Some(KnownCrs::WebMercator);
     }
 
-    if upper.contains("UTM") || upper.contains("ZONE") {
-        let zone = extract_utm_zone(&upper)?;
-        let northern = !upper.contains("SOUTH");
-        return Some(KnownCrs::UtmWgs84 { zone, northern });
+    if let Some((zone, northern)) = parse_utm_zone(&compact) {
+        let epsg: u16 = if northern { 32600 + zone as u16 } else { 32700 + zone as u16 };
+        return Some(KnownCrs::Epsg(epsg));
     }
 
-    if upper.contains("EPSG:326") {
-        let code_str = upper
-            .split(|c: char| !c.is_ascii_digit())
-            .filter(|s| !s.is_empty())
-            .next()?;
-        let code: u16 = code_str.parse().ok()?;
-        let zone = (code - 32600) as u8;
-        if (1..=60).contains(&zone) {
-            return Some(KnownCrs::UtmWgs84 {
-                zone,
-                northern: true,
-            });
-        }
-    }
-    if upper.contains("EPSG:327") {
-        let code_str = upper
-            .split(|c: char| !c.is_ascii_digit())
-            .filter(|s| !s.is_empty())
-            .next()?;
-        let code: u16 = code_str.parse().ok()?;
-        let zone = (code - 32700) as u8;
-        if (1..=60).contains(&zone) {
-            return Some(KnownCrs::UtmWgs84 {
-                zone,
-                northern: false,
-            });
-        }
+    if compact.contains("EPSG:4326") || compact.contains("EPSG4326")
+        || compact.contains("CRS84") || compact.contains("OGC:CRS84")
+        || is_wgs84_family
+    {
+        return Some(KnownCrs::Wgs84);
     }
 
-    None
-}
-
-fn extract_utm_zone(upper: &str) -> Option<u8> {
-    let zone_keywords = ["ZONE", "UTM ZONE", "UTM_ZONE", "ZONE "];
-    for kw in &zone_keywords {
-        if let Some(pos) = upper.find(kw) {
-            let after = &upper[pos + kw.len()..];
-            let num_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(zone) = num_str.parse::<u8>() {
-                if (1..=60).contains(&zone) {
-                    return Some(zone);
-                }
+    if compact.starts_with("EPSG:") || compact.starts_with("EPSG") {
+        let num_part = compact.trim_start_matches("EPSG:").trim_start_matches("EPSG");
+        if let Ok(code) = num_part.parse::<u16>() {
+            if crs_definitions::from_code(code).is_some() {
+                return Some(KnownCrs::Epsg(code));
             }
         }
     }
+
     None
 }
+
+fn parse_utm_zone(compact: &str) -> Option<(u8, bool)> {
+    let chars: Vec<char> = compact.chars().collect();
+    for start in 0..chars.len() {
+        if !compact[start..].starts_with("UTM") { continue; }
+        let mut idx = start + 3;
+        let scan_limit = (start + 20).min(chars.len());
+        while idx < scan_limit && !chars[idx].is_ascii_digit() { idx += 1; }
+        if idx >= scan_limit { continue; }
+        let digit_start = idx;
+        while idx < scan_limit && chars[idx].is_ascii_digit() { idx += 1; }
+        if digit_start == idx { continue; }
+        let zone: u8 = chars[digit_start..idx].iter().collect::<String>().parse().ok()?;
+        if !(1..=60).contains(&zone) { continue; }
+        while idx < scan_limit && chars[idx] != 'N' && chars[idx] != 'S' { idx += 1; }
+        if idx < scan_limit { return Some((zone, chars[idx] == 'N')); }
+    }
+    None
+}
+
+// ─── Coordinate Transformations ───
 
 pub fn known_crs_coord_to_wgs84(x: f64, y: f64, crs: KnownCrs) -> Option<(f64, f64)> {
     match crs {
         KnownCrs::Wgs84 => Some((x, y)),
-        KnownCrs::WebMercator => {
-            let lng = x * 180.0 / (WGS84_A * std::f64::consts::PI);
-            let val = (y / WGS84_A).exp();
-            let lat_rad = 2.0 * val.atan() - std::f64::consts::FRAC_PI_2;
-            let lat = lat_rad.to_degrees();
-            Some((lng, lat))
-        }
-        KnownCrs::UtmWgs84 { zone, northern } => utm_to_wgs84(x, y, zone, northern),
+        KnownCrs::WebMercator => crs_to_wgs84(x, y, 3857),
+        KnownCrs::Epsg(epsg) => crs_to_wgs84(x, y, epsg),
     }
 }
 
-pub fn known_crs_geometry_to_wgs84(
-    geometry: &Geometry<f64>,
-    crs: KnownCrs,
-) -> Option<Geometry<f64>> {
-    match crs {
-        KnownCrs::Wgs84 => Some(geometry.clone()),
-        _ => Some(geometry.map_coords(|coord| {
-            let (lng, lat) =
-                known_crs_coord_to_wgs84(coord.x, coord.y, crs).unwrap_or((coord.x, coord.y));
-            Coord { x: lng, y: lat }
-        })),
-    }
-}
-
-fn utm_to_wgs84(easting: f64, northing: f64, zone: u8, northern: bool) -> Option<(f64, f64)> {
-    let k0 = 0.9996;
-    let a = WGS84_A;
-    let e2 = WGS84_E2;
-    let _e = e2.sqrt();
-    let e1 = (1.0 - (1.0 - e2).sqrt()) / (1.0 + (1.0 - e2).sqrt());
-
-    let x = easting - 500000.0;
-    let y = if northern {
-        northing
-    } else {
-        northing - 10_000_000.0
-    };
-
-    let m = y / k0;
-    let mu = m / (a * (1.0 - e2 / 4.0 - 3.0 * e2 * e2 / 64.0 - 5.0 * e2 * e2 * e2 / 256.0));
-
-    let phi1 = mu
-        + (3.0 * e1 / 2.0 - 27.0 * e1 * e1 * e1 / 32.0) * (2.0 * mu).sin()
-        + (21.0 * e1 * e1 / 16.0 - 55.0 * e1 * e1 * e1 * e1 / 32.0) * (4.0 * mu).sin()
-        + (151.0 * e1 * e1 * e1 / 96.0) * (6.0 * mu).sin()
-        + (1097.0 * e1 * e1 * e1 * e1 / 512.0) * (8.0 * mu).sin();
-
-    let sin1 = phi1.sin();
-    let cos1 = phi1.cos();
-    let tan1 = sin1 / cos1;
-    let t1 = tan1 * tan1;
-    let c1 = e2 * cos1 * cos1 / (1.0 - e2);
-    let r1 = a * (1.0 - e2) / ((1.0 - e2 * sin1 * sin1).powf(1.5));
-    let n1 = a / (1.0 - e2 * sin1 * sin1).sqrt();
-
-    let d = x / (n1 * k0);
-
-    let lat = phi1
-        - (n1 * tan1 / r1)
-            * (d * d / 2.0
-                - (5.0 + 3.0 * t1 + 10.0 * c1 - 4.0 * c1 * c1 - 9.0 * e2) * d * d * d * d / 24.0
-                + (61.0 + 90.0 * t1 + 298.0 * c1 + 45.0 * t1 * t1 - 252.0 * e2 - 3.0 * c1 * c1)
-                    * d
-                    * d
-                    * d
-                    * d
-                    * d
-                    * d
-                    / 720.0);
-
-    let lng_origin = ((zone as i32) - 1) * 6 - 180 + 3;
-    let lng = lng_origin as f64
-        + (d - (1.0 + 2.0 * t1 + c1) * d * d * d / 6.0
-            + (5.0 - 2.0 * c1 + 28.0 * t1 - 3.0 * c1 * c1 + 8.0 * e2 + 24.0 * t1 * t1)
-                * d
-                * d
-                * d
-                * d
-                * d
-                / 120.0)
-            / cos1;
-
-    Some((lng, lat.to_degrees()))
+pub fn known_crs_geometry_to_wgs84(geometry: &Geometry<f64>, crs: KnownCrs) -> Option<Geometry<f64>> {
+    geometry.try_map_coords(|Coord { x, y }| {
+        known_crs_coord_to_wgs84(x, y, crs)
+            .map(|(lng, lat)| Coord { x: lng, y: lat })
+            .ok_or(())
+    }).ok()
 }
 
 pub fn wgs84_to_native_crs(lng: f64, lat: f64, geo_key: &GeoKeyInfo) -> Option<(f64, f64)> {
     if geo_key.model_type == Some(2) {
         return Some((lng, lat));
     }
-
-    let origin_lng = geo_key.proj_nat_origin_long.unwrap_or(0.0);
-    let origin_lat = geo_key.proj_nat_origin_lat.unwrap_or(0.0);
-    let false_easting = geo_key.proj_false_easting.unwrap_or(0.0);
-    let false_northing = geo_key.proj_false_northing.unwrap_or(0.0);
-    let scale = geo_key.proj_scale_at_nat_origin.unwrap_or(1.0);
-
-    let (x, y) = transverse_mercator_forward(lng, lat, origin_lng, origin_lat, scale);
-    Some((x + false_easting, y + false_northing))
+    if let Some(epsg) = epsg_from_geo_key(geo_key) {
+        return wgs84_to_crs(lng, lat, epsg);
+    }
+    if geo_key.proj_coord_trans == Some(1) {
+        let proj4 = proj4_from_tm_params(geo_key)?;
+        let op_str = geodesy::authoring::parse_proj(&proj4).ok()?;
+        let mut coords = [Coor2D::raw(lng.to_radians(), lat.to_radians())];
+        GEODESY.lock().unwrap().apply(&op_str, Fwd, &mut coords).ok()?;
+        return Some(coords[0].xy());
+    }
+    None
 }
 
-pub fn transverse_mercator_forward(
-    lng: f64,
-    lat: f64,
-    origin_lng: f64,
-    origin_lat: f64,
-    k0: f64,
-) -> (f64, f64) {
-    let a = WGS84_A;
-    let e2 = WGS84_E2;
-    let _e = e2.sqrt();
-
-    let lat_rad = lat.to_radians();
-    let lng_rad = lng.to_radians();
-    let origin_lng_rad = origin_lng.to_radians();
-    let origin_lat_rad = origin_lat.to_radians();
-
-    let d_lng = lng_rad - origin_lng_rad;
-    let sin_lat = lat_rad.sin();
-    let cos_lat = lat_rad.cos();
-    let tan_lat = sin_lat / cos_lat;
-    let t = tan_lat * tan_lat;
-    let n = a / (1.0 - e2 * sin_lat * sin_lat).sqrt();
-    let c = e2 * cos_lat * cos_lat / (1.0 - e2);
-    let a0 = (1.0 - e2 / 4.0 - 3.0 * e2 * e2 / 64.0 - 5.0 * e2 * e2 * e2 / 256.0) * a;
-    let a2 = (3.0 * e2 / 8.0 + 3.0 * e2 * e2 / 32.0 + 45.0 * e2 * e2 * e2 / 1024.0) * a;
-    let a4 = (15.0 * e2 * e2 / 256.0 + 45.0 * e2 * e2 * e2 / 1024.0) * a;
-    let a6 = 35.0 * e2 * e2 * e2 / 3072.0 * a;
-
-    let m = a0 * origin_lat_rad - a2 * (2.0 * origin_lat_rad).sin()
-        + a4 * (4.0 * origin_lat_rad).sin()
-        - a6 * (6.0 * origin_lat_rad).sin();
-
-    let m_south = m;
-    let m_north = a0 * lat_rad - a2 * (2.0 * lat_rad).sin() + a4 * (4.0 * lat_rad).sin()
-        - a6 * (6.0 * lat_rad).sin();
-
-    let northing = k0
-        * (m_north - m_south
-            + n * tan_lat * d_lng * d_lng * cos_lat / 2.0
-            + n * tan_lat
-                * (5.0 - t + 9.0 * c + 4.0 * c * c)
-                * d_lng
-                * d_lng
-                * d_lng
-                * d_lng
-                * cos_lat
-                / 24.0);
-
-    let easting = k0
-        * (n * d_lng * cos_lat
-            + n * (1.0 - t + c) * d_lng * d_lng * d_lng * cos_lat / 6.0
-            + n * (5.0 - 18.0 * t + t * t + 72.0 * c - 58.0 * e2)
-                * d_lng
-                * d_lng
-                * d_lng
-                * d_lng
-                * d_lng
-                * cos_lat
-                / 120.0);
-
-    (easting, northing)
+#[allow(dead_code)]
+pub fn known_crs_corners_to_wgs84(corners: &[(f64, f64); 4], crs: KnownCrs) -> Option<[f64; 4]> {
+    match crs {
+        KnownCrs::Wgs84 => Some(sort_extent(corners)),
+        _ => {
+            let mut wgs = Vec::new();
+            for &(x, y) in corners {
+                wgs.push(known_crs_coord_to_wgs84(x, y, crs)?);
+            }
+            Some(sort_extent(&[wgs[0], wgs[1], wgs[2], wgs[3]]))
+        }
+    }
 }
 
-pub fn extent_to_wgs84(
-    geo_transform: &[f64; 6],
-    width: u32,
-    height: u32,
-    geo_key: &GeoKeyInfo,
-) -> Option<[f64; 4]> {
-    let gt = *geo_transform;
+pub fn extent_to_wgs84(geo_transform: &[f64; 6], width: u32, height: u32, geo_key: &GeoKeyInfo) -> Option<[f64; 4]> {
+    let corners = model_corners(geo_transform, width, height);
 
     if geo_key.model_type == Some(2) {
-        let min_lng = gt[0];
-        let max_lng = gt[0] + width as f64 * gt[1];
-        let min_lat = gt[3] + height as f64 * gt[5];
-        let max_lat = gt[3];
-        return Some([min_lng, min_lat, max_lng, max_lat]);
+        return Some(sort_extent(&corners));
     }
 
-    if geo_key.model_type == Some(1) {
-        let corners = [
-            (gt[0], gt[3]),
-            (gt[0] + width as f64 * gt[1], gt[3]),
-            (gt[0], gt[3] + height as f64 * gt[5]),
-            (gt[0] + width as f64 * gt[1], gt[3] + height as f64 * gt[5]),
-        ];
+    if let Some(epsg) = epsg_from_geo_key(geo_key) {
+        let mut wgs_corners = Vec::new();
+        for &(x, y) in &corners {
+            wgs_corners.push(crs_to_wgs84(x, y, epsg)?);
+        }
+        if wgs_corners.len() == 4 {
+            return Some(sort_extent(&[wgs_corners[0], wgs_corners[1], wgs_corners[2], wgs_corners[3]]));
+        }
+    }
 
-        let known_crs = determine_crs_from_geo_key(geo_key);
-        if let Some(crs) = known_crs {
-            let wgs84_corners: Vec<(f64, f64)> = corners
-                .iter()
-                .filter_map(|&(x, y)| known_crs_coord_to_wgs84(x, y, crs))
-                .collect();
-
-            if wgs84_corners.len() == 4 {
-                let min_lng = wgs84_corners
-                    .iter()
-                    .map(|(x, _)| x)
-                    .cloned()
-                    .fold(f64::INFINITY, f64::min);
-                let max_lng = wgs84_corners
-                    .iter()
-                    .map(|(x, _)| x)
-                    .cloned()
-                    .fold(f64::NEG_INFINITY, f64::max);
-                let min_lat = wgs84_corners
-                    .iter()
-                    .map(|(_, y)| y)
-                    .cloned()
-                    .fold(f64::INFINITY, f64::min);
-                let max_lat = wgs84_corners
-                    .iter()
-                    .map(|(_, y)| y)
-                    .cloned()
-                    .fold(f64::NEG_INFINITY, f64::max);
-                return Some([min_lng, min_lat, max_lng, max_lat]);
+    if geo_key.proj_coord_trans == Some(1) {
+        if let Some(proj4_str) = proj4_from_tm_params(geo_key) {
+            if let Ok(op_str) = geodesy::authoring::parse_proj(&proj4_str) {
+                let mut engine = GEODESY.lock().unwrap();
+                let mut wgs_corners = Vec::new();
+                for &(x, y) in &corners {
+                    let mut coords = [Coor2D::raw(x, y)];
+                    engine.apply(&op_str, Inv, &mut coords).ok()?;
+                    let (lng_rad, lat_rad) = coords[0].xy();
+                    wgs_corners.push((lng_rad.to_degrees(), lat_rad.to_degrees()));
+                }
+                if wgs_corners.len() == 4 {
+                    return Some(sort_extent(&[wgs_corners[0], wgs_corners[1], wgs_corners[2], wgs_corners[3]]));
+                }
             }
         }
+    }
 
-        let origin_lng = geo_key.proj_nat_origin_long.unwrap_or(0.0);
-        let origin_lat = geo_key.proj_nat_origin_lat.unwrap_or(0.0);
-        let wgs84_corners: Vec<(f64, f64)> = corners
-            .iter()
-            .map(|&(x, y)| {
-                let d_lng = (x - origin_lng) / (WGS84_A * origin_lat.to_radians().cos());
-                let lat = y / 111320.0 + origin_lat;
-                let lng = d_lng.to_degrees() + origin_lng;
-                (lng, lat)
-            })
-            .collect();
-
-        let min_lng = wgs84_corners
-            .iter()
-            .map(|(x, _)| x)
-            .cloned()
-            .fold(f64::INFINITY, f64::min);
-        let max_lng = wgs84_corners
-            .iter()
-            .map(|(x, _)| x)
-            .cloned()
-            .fold(f64::NEG_INFINITY, f64::max);
-        let min_lat = wgs84_corners
-            .iter()
-            .map(|(_, y)| y)
-            .cloned()
-            .fold(f64::INFINITY, f64::min);
-        let max_lat = wgs84_corners
-            .iter()
-            .map(|(_, y)| y)
-            .cloned()
-            .fold(f64::NEG_INFINITY, f64::max);
-        return Some([min_lng, min_lat, max_lng, max_lat]);
+    if geographic_range(&corners) {
+        return Some(sort_extent(&corners));
+    }
+    if is_web_mercator_range(&corners) {
+        let mut wgs_corners = Vec::new();
+        for &(x, y) in &corners {
+            wgs_corners.push(crs_to_wgs84(x, y, 3857)?);
+        }
+        if wgs_corners.len() == 4 {
+            return Some(sort_extent(&[wgs_corners[0], wgs_corners[1], wgs_corners[2], wgs_corners[3]]));
+        }
     }
 
     None
 }
 
-fn determine_crs_from_geo_key(geo_key: &GeoKeyInfo) -> Option<KnownCrs> {
-    if let Some(proj_type) = geo_key.projected_type {
-        if (32601..=32660).contains(&proj_type) {
-            let zone = (proj_type - 32600) as u8;
-            return Some(KnownCrs::UtmWgs84 {
-                zone,
-                northern: true,
-            });
-        }
-        if (32701..=32760).contains(&proj_type) {
-            let zone = (proj_type - 32700) as u8;
-            return Some(KnownCrs::UtmWgs84 {
-                zone,
-                northern: false,
-            });
-        }
-    }
-    if let Some(geo_type) = geo_key.geographic_type {
-        if geo_type == 4326 || geo_type == 4269 {
-            return Some(KnownCrs::Wgs84);
-        }
-    }
+// ─── Helpers ───
 
-    let origin_lng = geo_key.proj_nat_origin_long.unwrap_or(0.0);
-    let _origin_lat = geo_key.proj_nat_origin_lat.unwrap_or(0.0);
-
-    let zone = ((origin_lng + 180.0) / 6.0).ceil() as u8;
-    if (1..=60).contains(&zone) && origin_lng.abs() <= 180.0 {
-        return Some(KnownCrs::UtmWgs84 {
-            zone,
-            northern: true,
-        });
+fn epsg_from_geo_key(geo_key: &GeoKeyInfo) -> Option<u16> {
+    if let Some(epsg) = geo_key.projected_type {
+        return Some(epsg);
     }
+    if geo_key.model_type == Some(2) {
+        return geo_key.geographic_type.or(Some(4326));
+    }
+    if geo_key.proj_coord_trans == Some(1) {
+        return None;
+    }
+    geo_key.geographic_type
+}
 
-    None
+fn proj4_from_tm_params(geo_key: &GeoKeyInfo) -> Option<String> {
+    let lon0 = geo_key.proj_nat_origin_long?;
+    let lat0 = geo_key.proj_nat_origin_lat?;
+    let k0 = geo_key.proj_scale_at_nat_origin.unwrap_or(1.0);
+    let fe = geo_key.proj_false_easting.unwrap_or(0.0);
+    let fn_ = geo_key.proj_false_northing.unwrap_or(0.0);
+    Some(format!(
+        "+proj=tmerc +lat_0={lat0} +lon_0={lon0} +k={k0} +x_0={fe} +y_0={fn_} +ellps=WGS84 +units=m +no_defs"
+    ))
+}
+
+fn model_corners(gt: &[f64; 6], width: u32, height: u32) -> [(f64, f64); 4] {
+    let (xo, xr, _, yo, _, yr) = (gt[0], gt[1], gt[2], gt[3], gt[4], gt[5]);
+    [
+        (xo, yo),
+        (xo + width as f64 * xr, yo),
+        (xo, yo + height as f64 * yr),
+        (xo + width as f64 * xr, yo + height as f64 * yr),
+    ]
+}
+
+fn sort_extent(corners: &[(f64, f64); 4]) -> [f64; 4] {
+    let mut xs: Vec<f64> = corners.iter().map(|c| c.0).collect();
+    let mut ys: Vec<f64> = corners.iter().map(|c| c.1).collect();
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    [xs[0], ys[0], xs[3], ys[3]]
+}
+
+fn is_web_mercator_range(corners: &[(f64, f64); 4]) -> bool {
+    const WM_BOUND: f64 = 20037508.34;
+    corners.iter().all(|&(x, y)| x.abs() <= WM_BOUND && y.abs() <= WM_BOUND && x.abs() > 180.0)
+}
+
+fn geographic_range(corners: &[(f64, f64); 4]) -> bool {
+    corners.iter().all(|&(x, y)| x.abs() <= 180.0 && y.abs() <= 90.0)
 }

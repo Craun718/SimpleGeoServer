@@ -46,11 +46,64 @@ fn load_and_cache_shapefile(path: &str) -> Result<Arc<CachedShapefile>, String> 
     };
 
     let shapes = shapefile::read_shapes(path)
-        .map_err(|e| format!("Failed to read shapefile: {}", e))?;
+        .map_err(|e| format!("Failed to read shapes: {}", e))?;
 
     let geometries = convert_shapes(shapes, crs);
     let feature_count = geometries.len() as u32;
-    let no_attrs = vec![None; feature_count as usize];
+
+    // Read DBF attributes
+    let dbf_path = std::path::Path::new(path).with_extension("dbf");
+    let attributes: Vec<Option<serde_json::Map<String, serde_json::Value>>> = if dbf_path.exists() {
+        match shapefile::dbase::Reader::from_path(&dbf_path) {
+            Ok(mut dbase_reader) => {
+                let field_names: Vec<String> = dbase_reader
+                    .fields()
+                    .iter()
+                    .map(|f| f.name().to_string())
+                    .collect();
+                dbase_reader
+                    .iter_records()
+                    .map(|rec| {
+                        rec.ok().map(|record| {
+                            let mut map = serde_json::Map::new();
+                            for name in &field_names {
+                                let val = match record.get(name.as_str()) {
+                                    Some(shapefile::dbase::FieldValue::Character(Some(s))) => {
+                                        serde_json::Value::String(s.clone())
+                                    }
+                                    Some(shapefile::dbase::FieldValue::Numeric(Some(n))) => {
+                                        serde_json::Number::from_f64(*n)
+                                            .map(serde_json::Value::Number)
+                                            .unwrap_or(serde_json::Value::Null)
+                                    }
+                                    Some(shapefile::dbase::FieldValue::Integer(n)) => {
+                                        serde_json::Value::Number(serde_json::Number::from(*n))
+                                    }
+                                    Some(shapefile::dbase::FieldValue::Float(Some(f))) => {
+                                        serde_json::Number::from_f64(*f as f64)
+                                            .map(serde_json::Value::Number)
+                                            .unwrap_or(serde_json::Value::Null)
+                                    }
+                                    Some(shapefile::dbase::FieldValue::Logical(Some(b))) => {
+                                        serde_json::Value::Bool(*b)
+                                    }
+                                    Some(shapefile::dbase::FieldValue::Date(Some(d))) => {
+                                        serde_json::Value::String(format!("{d:?}"))
+                                    }
+                                    _ => serde_json::Value::Null,
+                                };
+                                map.insert(name.clone(), val);
+                            }
+                            map
+                        })
+                    })
+                    .collect()
+            }
+            Err(_) => vec![None; feature_count as usize],
+        }
+    } else {
+        vec![None; feature_count as usize]
+    };
 
     let extent = geometries
         .iter()
@@ -78,7 +131,7 @@ fn load_and_cache_shapefile(path: &str) -> Result<Arc<CachedShapefile>, String> 
     Ok(Arc::new(CachedShapefile {
         file_path: path.to_string(),
         geometries,
-        attributes: no_attrs,
+        attributes,
         crs,
         feature_count,
         extent: extent_arr,
@@ -112,14 +165,7 @@ fn parse_epsg_code(code: u16) -> Option<crate::reproject::KnownCrs> {
     match code {
         4326 => Some(crate::reproject::KnownCrs::Wgs84),
         3857 => Some(crate::reproject::KnownCrs::WebMercator),
-        32601..=32660 => Some(crate::reproject::KnownCrs::UtmWgs84 {
-            zone: (code - 32600) as u8,
-            northern: true,
-        }),
-        32701..=32760 => Some(crate::reproject::KnownCrs::UtmWgs84 {
-            zone: (code - 32700) as u8,
-            northern: false,
-        }),
+        32601..=32760 => Some(crate::reproject::KnownCrs::Epsg(code)),
         _ => None,
     }
 }

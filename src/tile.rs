@@ -13,6 +13,118 @@ use tiff::decoder::{ChunkType, Decoder, Limits};
 pub(crate) const R: f64 = 6378137.0;
 pub(crate) const C: f64 = R * std::f64::consts::PI;
 
+pub use crate::resample::{ResamplingMode, StretchConfig};
+
+// ─── Raster Block Iterator ───
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct RasterBlockConfig {
+    pub block_width: u32,
+    pub block_height: u32,
+    pub overlap: u32,
+    pub step: u32,
+}
+
+impl Default for RasterBlockConfig {
+    fn default() -> Self {
+        Self { block_width: 512, block_height: 512, overlap: 0, step: 1 }
+    }
+}
+
+#[allow(dead_code)]
+pub struct RasterBlock {
+    pub block_col: u32,
+    pub block_row: u32,
+    pub col_off: u32,
+    pub row_off: u32,
+    pub width: u32,
+    pub height: u32,
+    pub col_off_raw: u32,
+    pub row_off_raw: u32,
+    pub width_raw: u32,
+    pub height_raw: u32,
+    pub data: Vec<f64>,
+}
+
+#[allow(dead_code)]
+pub struct RasterBlockIterator {
+    ifd: IfdInfo,
+    config: RasterBlockConfig,
+    blocks_x: u32,
+    blocks_y: u32,
+    current_block: u32,
+    bands: usize,
+    file_path: String,
+}
+
+#[allow(dead_code)]
+impl RasterBlockIterator {
+    pub fn new(path: &str, ifd: &IfdInfo, config: RasterBlockConfig, bands: usize) -> Self {
+        let blocks_x = (ifd.width + config.block_width - 1) / config.block_width;
+        let blocks_y = (ifd.height + config.block_height - 1) / config.block_height;
+        Self {
+            ifd: ifd.clone(),
+            config,
+            blocks_x,
+            blocks_y,
+            current_block: 0,
+            bands,
+            file_path: path.to_string(),
+        }
+    }
+
+    pub fn next_block(&mut self) -> Option<Result<RasterBlock, String>> {
+        if self.current_block >= self.blocks_x * self.blocks_y {
+            return None;
+        }
+
+        let block_col = self.current_block % self.blocks_x;
+        let block_row = self.current_block / self.blocks_x;
+        let col_off = block_col * self.config.block_width;
+        let row_off = block_row * self.config.block_height;
+        let bw = self.config.block_width.min(self.ifd.width - col_off);
+        let bh = self.config.block_height.min(self.ifd.height - row_off);
+
+        let overlap = self.config.overlap;
+        let col_off_raw = col_off.saturating_sub(overlap);
+        let row_off_raw = row_off.saturating_sub(overlap);
+        let width_raw = (bw + overlap * 2).min(self.ifd.width - col_off_raw);
+        let height_raw = (bh + overlap * 2).min(self.ifd.height - row_off_raw);
+
+        let data = match read_raster_region(
+            &self.file_path,
+            None,
+            &self.ifd,
+            col_off_raw,
+            row_off_raw,
+            width_raw,
+            height_raw,
+            self.bands,
+            self.config.step,
+        ) {
+            Ok(d) => d,
+            Err(e) => return Some(Err(e)),
+        };
+
+        self.current_block += 1;
+
+        Some(Ok(RasterBlock {
+            block_col,
+            block_row,
+            col_off,
+            row_off,
+            width: bw,
+            height: bh,
+            col_off_raw,
+            row_off_raw,
+            width_raw,
+            height_raw,
+            data,
+        }))
+    }
+}
+
 // ─── 数据结构 ───
 
 #[allow(dead_code)]
@@ -52,7 +164,7 @@ pub struct GeoFileInfo {
 }
 
 #[derive(Debug, Clone)]
-struct IfdInfo {
+pub(crate) struct IfdInfo {
     index: usize,
     width: u32,
     height: u32,
@@ -66,24 +178,24 @@ struct IfdInfo {
 
 #[allow(dead_code)]
 pub(crate) struct CachedRaster {
-    file_path: String,
+    pub(crate) file_path: String,
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) bands: usize,
-    geo_transform: [f64; 6],
-    no_data: Option<f64>,
-    min_values: Vec<f64>,
-    max_values: Vec<f64>,
-    mean_values: Vec<f64>,
-    std_dev_values: Vec<f64>,
-    crs_type: String,
-    geo_key: crate::reproject::GeoKeyInfo,
-    wgs84_corners: [(f64, f64); 4],
-    native_corners: [(f64, f64); 4],
-    ifds: Vec<IfdInfo>,
-    percentile_bounds: std::sync::Mutex<Option<Vec<(f64, f64)>>>,
-    ovr_path: Option<String>,
-    max_zoom: u32,
+    pub(crate) geo_transform: [f64; 6],
+    pub(crate) no_data: Option<f64>,
+    pub(crate) min_values: Vec<f64>,
+    pub(crate) max_values: Vec<f64>,
+    pub(crate) mean_values: Vec<f64>,
+    pub(crate) std_dev_values: Vec<f64>,
+    pub(crate) crs_type: String,
+    pub(crate) geo_key: crate::reproject::GeoKeyInfo,
+    pub(crate) wgs84_corners: [(f64, f64); 4],
+    pub(crate) native_corners: [(f64, f64); 4],
+    pub(crate) ifds: Vec<IfdInfo>,
+    pub(crate) percentile_bounds: std::sync::Mutex<Option<Vec<(f64, f64)>>>,
+    pub(crate) ovr_path: Option<String>,
+    pub(crate) max_zoom: u32,
 }
 
 static RASTER_CACHE: Lazy<RwLock<HashMap<String, Arc<CachedRaster>>>> =
@@ -788,20 +900,34 @@ fn select_ifd_for_zoom(raster: &CachedRaster, z: u32) -> usize {
     if raster.ifds.len() <= 1 {
         return 0;
     }
-    for i in (1..raster.ifds.len()).rev() {
-        let ifd = &raster.ifds[i];
-        let ratio = raster.width as f64 / ifd.width as f64;
-        let log2_ratio = ratio.log2().ceil() as u32;
-        let ifd_max_z = if log2_ratio >= raster.max_zoom {
-            0u32
-        } else {
-            raster.max_zoom - log2_ratio
-        };
-        if ifd_max_z >= z {
-            return i;
+    let size = 256u32;
+    let (min_x, _min_y, max_x, _max_y) = tile_bounds_epsg3857(z, 0, 0, size);
+    let tile_width_m = (max_x - min_x).abs();
+    let tile_res_meters = tile_width_m / size as f64;
+
+    let is_geographic = raster.crs_type == "Geographic" || raster.crs_type == "Unknown";
+    let base_m_per_px = if is_geographic {
+        raster.geo_transform[1].abs() * 111320.0
+    } else {
+        raster.geo_transform[1].abs()
+    };
+
+    if base_m_per_px <= 0.0 || tile_res_meters <= 0.0 {
+        return 0;
+    }
+
+    let mut best_idx = 0usize;
+    let mut best_diff = f64::INFINITY;
+    for (i, ifd) in raster.ifds.iter().enumerate() {
+        let scale = raster.width as f64 / ifd.width as f64;
+        let ifd_res = base_m_per_px * scale;
+        let diff = (ifd_res - tile_res_meters).abs();
+        if diff < best_diff {
+            best_diff = diff;
+            best_idx = i;
         }
     }
-    0
+    best_idx
 }
 
 fn read_geo_transform_tile(path: &str) -> [f64; 6] {
@@ -989,6 +1115,19 @@ pub fn render_raster_tile(
     size: u32,
     bands: &[u32],
 ) -> Result<(Vec<u8>, u32), String> {
+    render_raster_tile_ex(raster, z, x, y, size, bands, None, None)
+}
+
+pub fn render_raster_tile_ex(
+    raster: &CachedRaster,
+    z: u32,
+    x: u32,
+    y: u32,
+    size: u32,
+    bands: &[u32],
+    resampling: Option<ResamplingMode>,
+    stretch: Option<&StretchConfig>,
+) -> Result<(Vec<u8>, u32), String> {
     let ifd_idx = select_ifd_for_zoom(raster, z);
     let (min_x, min_y, max_x, max_y) = tile_bounds_epsg3857(z, x, y, size);
     let range_x = max_x - min_x;
@@ -1086,9 +1225,14 @@ pub fn render_raster_tile(
     let src_w = src_w.min(raster.width - col_off);
     let src_h = src_h.min(raster.height - row_off);
 
+    let resampling_mode = resampling.unwrap_or(ResamplingMode::Nearest);
+    let needs_full_res = resampling_mode != ResamplingMode::Nearest;
+
     let max_read_pixels = 1024u64 * 1024u64;
     let raw_pixels = src_w as u64 * src_h as u64;
-    let step = if raw_pixels > max_read_pixels {
+    let step = if needs_full_res {
+        1u32
+    } else if raw_pixels > max_read_pixels {
         let ratio = (raw_pixels as f64 / max_read_pixels as f64).sqrt();
         (ratio.ceil() as u32).max(1)
     } else {
@@ -1120,6 +1264,8 @@ pub fn render_raster_tile(
     let col_off_f = col_off as f64;
     let row_off_f = row_off as f64;
     let read_w_u = read_w as usize;
+
+    let stretch_bounds = crate::resample::compute_stretch_bounds(raster, stretch);
 
     let mut img = RgbaImage::new(size, size);
     let mut rendered: u32 = 0;
@@ -1167,74 +1313,102 @@ pub fn render_raster_tile(
             let col = u * (raster.width as f64 - 1.0);
             let row = (1.0 - v) * (raster.height as f64 - 1.0);
 
-            let col_i = col.round() as i64;
-            let row_i = row.round() as i64;
+            if col < 0.0 || row < 0.0 || col >= raster.width as f64 || row >= raster.height as f64 {
+                continue;
+            }
 
-            if col_i >= 0
-                && col_i < raster.width as i64
-                && row_i >= 0
-                && row_i < raster.height as i64
-            {
-                let local_col_f = col_i as f64 - col_off_f;
-                let local_row_f = row_i as f64 - row_off_f;
-                let ds_col = (local_col_f / step_f) as usize;
-                let ds_row = (local_row_f / step_f) as usize;
+            let local_col = col - col_off_f;
+            let local_row = row - row_off_f;
 
-                if ds_col < read_w_u && ds_row < read_h as usize {
-                    let idx = (ds_row * read_w_u + ds_col) * raster.bands;
+            if local_col < 0.0 || local_row < 0.0 {
+                continue;
+            }
 
-                    let mut rgba = [0u8; 4];
-                    rgba[3] = 255;
-                    let mut pixel_is_nodata = false;
+            let mut rgba = [0u8; 4];
+            rgba[3] = 255;
+            let mut pixel_is_nodata = false;
 
-                    if use_grayscale {
-                        let bi = 0usize;
-                        if idx + bi < region_data.len() {
-                            let val = region_data[idx + bi];
-                            if crate::raster::is_nodata(val, raster.no_data) {
-                                pixel_is_nodata = true;
+            let sample_fn = |band: usize| -> f64 {
+                match resampling_mode {
+                    ResamplingMode::Nearest => {
+                        let dc = (local_col / step_f) as usize;
+                        let dr = (local_row / step_f) as usize;
+                        if dc < read_w_u && dr < read_h as usize {
+                            let idx = (dr * read_w_u + dc) * raster.bands + band;
+                            if idx < region_data.len() {
+                                region_data[idx]
                             } else {
-                                let (min_v, max_v) = (raster.min_values[bi], raster.max_values[bi]);
-                                let stretched = if (max_v - min_v).abs() > f64::EPSILON {
-                                    ((val - min_v) / (max_v - min_v) * 255.0).clamp(0.0, 255.0)
-                                } else {
-                                    0.0
-                                };
-                                let gray = stretched as u8;
-                                rgba[0] = gray;
-                                rgba[1] = gray;
-                                rgba[2] = gray;
+                                f64::NAN
                             }
                         } else {
-                            pixel_is_nodata = true;
-                        }
-                    } else {
-                        for (out_idx, &bi) in band_indices.iter().enumerate().take(3) {
-                            if bi < raster.bands && idx + bi < region_data.len() {
-                                let val = region_data[idx + bi];
-                                if crate::raster::is_nodata(val, raster.no_data) {
-                                    pixel_is_nodata = true;
-                                    break;
-                                }
-                                let (min_v, max_v) = (raster.min_values[bi], raster.max_values[bi]);
-                                let stretched = if (max_v - min_v).abs() > f64::EPSILON {
-                                    ((val - min_v) / (max_v - min_v) * 255.0).clamp(0.0, 255.0)
-                                } else {
-                                    0.0
-                                };
-                                rgba[out_idx] = stretched as u8;
-                            } else {
-                                pixel_is_nodata = true;
-                                break;
-                            }
+                            f64::NAN
                         }
                     }
+                    ResamplingMode::Bilinear => crate::resample::sample_bilinear(
+                        &region_data, local_col, local_row,
+                        read_w_u, read_h as usize, raster.bands, band,
+                    ),
+                    ResamplingMode::Bicubic => crate::resample::sample_bicubic(
+                        &region_data, local_col, local_row,
+                        read_w_u, read_h as usize, raster.bands, band,
+                    ),
+                    ResamplingMode::Lanczos3 => crate::resample::sample_lanczos3(
+                        &region_data, local_col, local_row,
+                        read_w_u, read_h as usize, raster.bands, band,
+                    ),
+                }
+            };
 
+            macro_rules! stretch_band {
+                ($val:expr, $bi:ident) => {{
+                    if crate::raster::is_nodata($val, raster.no_data) {
+                        pixel_is_nodata = true;
+                        0u8
+                    } else {
+                        let (min_v, max_v) = stretch_bounds[$bi];
+                        if (max_v - min_v).abs() > f64::EPSILON {
+                            ((($val - min_v) / (max_v - min_v)) * 255.0).clamp(0.0, 255.0) as u8
+                        } else {
+                            0
+                        }
+                    }
+                }};
+            }
+
+            if use_grayscale {
+                let bi = 0usize;
+                let val = sample_fn(bi);
+                if !val.is_finite() {
+                    pixel_is_nodata = true;
+                } else {
+                    let gray = stretch_band!(val, bi);
                     if !pixel_is_nodata {
-                        img.put_pixel(tx, ty, image::Rgba(rgba));
-                        rendered += 1;
+                        rgba[0] = gray;
+                        rgba[1] = gray;
+                        rgba[2] = gray;
                     }
                 }
+            } else {
+                for (out_idx, &bi) in band_indices.iter().enumerate().take(3) {
+                    if bi >= raster.bands {
+                        pixel_is_nodata = true;
+                        break;
+                    }
+                    let val = sample_fn(bi);
+                    if !val.is_finite() {
+                        pixel_is_nodata = true;
+                        break;
+                    }
+                    rgba[out_idx] = stretch_band!(val, bi);
+                    if pixel_is_nodata {
+                        break;
+                    }
+                }
+            }
+
+            if !pixel_is_nodata {
+                img.put_pixel(tx, ty, image::Rgba(rgba));
+                rendered += 1;
             }
         }
     }
@@ -1248,6 +1422,27 @@ pub fn render_raster_tile(
     }
 
     Ok((png_bytes, rendered))
+}
+
+pub fn render_raster_tile_webp(
+    raster: &CachedRaster,
+    z: u32,
+    x: u32,
+    y: u32,
+    size: u32,
+    bands: &[u32],
+) -> Result<(Vec<u8>, u32), String> {
+    let (rgba_data, rendered) = render_raster_tile(raster, z, x, y, size, bands)?;
+
+    let img = image::load_from_memory(&rgba_data)
+        .map_err(|e| format!("Failed to reload PNG: {}", e))?;
+    let mut webp_bytes = Vec::new();
+    let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut webp_bytes);
+    encoder
+        .encode(img.as_rgba8().unwrap(), size, size, image::ExtendedColorType::Rgba8)
+        .map_err(|e| format!("WebP encode error: {}", e))?;
+
+    Ok((webp_bytes, rendered))
 }
 
 // ─── WMS 通用地图渲染（任意 BBOX） ───
@@ -1404,6 +1599,8 @@ pub fn render_map_bbox(
     let row_off_f = row_off as f64;
     let read_w_u = read_w as usize;
 
+    let stretch_bounds = crate::resample::compute_stretch_bounds(raster, None);
+
     let mut img = image::RgbaImage::new(width, height);
     if !transparent {
         for pixel in img.pixels_mut() {
@@ -1482,7 +1679,7 @@ pub fn render_map_bbox(
                             if crate::raster::is_nodata(val, raster.no_data) {
                                 pixel_is_nodata = true;
                             } else {
-                                let (min_v, max_v) = (raster.min_values[bi], raster.max_values[bi]);
+                                let (min_v, max_v) = stretch_bounds[bi];
                                 let stretched = if (max_v - min_v).abs() > f64::EPSILON {
                                     ((val - min_v) / (max_v - min_v) * 255.0).clamp(0.0, 255.0)
                                 } else {
@@ -1504,7 +1701,7 @@ pub fn render_map_bbox(
                                     pixel_is_nodata = true;
                                     break;
                                 }
-                                let (min_v, max_v) = (raster.min_values[bi], raster.max_values[bi]);
+                                let (min_v, max_v) = stretch_bounds[bi];
                                 let stretched = if (max_v - min_v).abs() > f64::EPSILON {
                                     ((val - min_v) / (max_v - min_v) * 255.0).clamp(0.0, 255.0)
                                 } else {
@@ -1724,6 +1921,120 @@ fn transform_geojson_feature(
         properties: feature.properties.clone(),
         foreign_members: feature.foreign_members.clone(),
     }))
+}
+
+// ─── WKT 瓦片 ───
+
+pub fn get_wkt_tile_geojson(req: &VectorTileRequest) -> Result<String, String> {
+    let tile_rect = wgs84_tile_rect(req.z, req.x, req.y);
+    let content =
+        std::fs::read_to_string(&req.path).map_err(|e| format!("Failed to read WKT file: {}", e))?;
+    let wkt: wkt::Wkt<f64> = content.parse().map_err(|e| format!("Invalid WKT: {}", e))?;
+    let geometry = geo_types::Geometry::<f64>::try_from(wkt)
+        .map_err(|e| format!("Failed to convert WKT geometry: {e:?}"))?;
+
+    let features = if geometry.intersects(&tile_rect) {
+        let geojson_geom = geojson::Geometry::try_from(&geometry)
+            .map_err(|e| format!("Failed to convert to GeoJSON: {e}"))?;
+        vec![geojson::Feature {
+            bbox: None,
+            geometry: Some(geojson_geom),
+            id: None,
+            properties: None,
+            foreign_members: None,
+        }]
+    } else {
+        vec![]
+    };
+
+    let fc = geojson::FeatureCollection {
+        bbox: None,
+        features,
+        foreign_members: None,
+    };
+    serde_json::to_string(&fc).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ─── KML/KMZ 瓦片 ───
+
+pub fn get_kml_tile_geojson(req: &VectorTileRequest) -> Result<String, String> {
+    let tile_rect = wgs84_tile_rect(req.z, req.x, req.y);
+    let ext = std::path::Path::new(&req.path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    use kml::Kml;
+    let kml_doc: Kml<f64> = if ext == "kmz" {
+        let mut reader = kml::KmlReader::from_kmz_path(&req.path)
+            .map_err(|e| format!("Failed to open KMZ: {}", e))?;
+        reader.read().map_err(|e| format!("Failed to parse KMZ: {}", e))?
+    } else {
+        let content = std::fs::read_to_string(&req.path)
+            .map_err(|e| format!("Failed to read KML: {}", e))?;
+        content.parse::<Kml<f64>>()
+            .map_err(|e| format!("Invalid KML: {}", e))?
+    };
+
+    let mut features = Vec::new();
+    collect_kml_placemarks(&kml_doc, &tile_rect, &mut features);
+
+    let fc = geojson::FeatureCollection {
+        bbox: None,
+        features,
+        foreign_members: None,
+    };
+    serde_json::to_string(&fc).map_err(|e| format!("Serialization error: {}", e))
+}
+
+fn collect_kml_placemarks(
+    kml: &kml::Kml<f64>,
+    tile_rect: &geo_types::Rect<f64>,
+    features: &mut Vec<geojson::Feature>,
+) {
+    use kml::Kml;
+    match kml {
+        Kml::KmlDocument(doc) => {
+            for element in &doc.elements {
+                collect_kml_placemarks(element, tile_rect, features);
+            }
+        }
+        Kml::Document { elements, .. } => {
+            for element in elements {
+                collect_kml_placemarks(element, tile_rect, features);
+            }
+        }
+        Kml::Folder { elements, .. } => {
+            for element in elements {
+                collect_kml_placemarks(element, tile_rect, features);
+            }
+        }
+        Kml::Placemark(placemark) => {
+            if let Some(ref geometry) = placemark.geometry {
+                if let Ok(geo_geom) = geo_types::Geometry::<f64>::try_from(geometry.clone()) {
+                    if geo_geom.intersects(tile_rect) {
+                        let geom = geojson::Geometry::try_from(&geo_geom).unwrap();
+                        let mut props = serde_json::Map::new();
+                        if let Some(ref name) = placemark.name {
+                            props.insert("name".to_string(), serde_json::Value::String(name.clone()));
+                        }
+                        if let Some(ref desc) = placemark.description {
+                            props.insert("description".to_string(), serde_json::Value::String(desc.clone()));
+                        }
+                        features.push(geojson::Feature {
+                            bbox: None,
+                            geometry: Some(geom),
+                            id: None,
+                            properties: Some(props),
+                            foreign_members: None,
+                        });
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 // ─── 元数据 ───

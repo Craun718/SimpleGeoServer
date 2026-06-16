@@ -610,18 +610,38 @@ pub(crate) async fn wmts_get_tile(
         return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "WMTS only supports raster layers").into_response();
     }
 
+    // Check L2 cache
+    let resampling = crate::resample::ResamplingMode::Nearest;
+    let cache_key = crate::tile_cache::TileCacheKey::new(&path_str, params.z, params.x, params.y, resampling);
+    {
+        let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
+        if let Some(cached) = l2.get(&cache_key) {
+            crate::tile_cache::record_l2_hit();
+            return ([(header::CONTENT_TYPE, "image/png")], cached.clone()).into_response();
+        }
+    }
+    if let Some(cached) = crate::tile_cache::disk_cache_get(&path_str, params.z, params.x, params.y, resampling) {
+        crate::tile_cache::record_l3_hit();
+        let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
+        l2.insert(cache_key, cached.clone());
+        return ([(header::CONTENT_TYPE, "image/png")], cached).into_response();
+    }
+    crate::tile_cache::record_miss();
+
     let raster = match crate::tile::get_raster(&path_str) {
         Ok(r) => r,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     };
 
     let bands = get_bands(&raster);
-    match crate::tile::render_raster_tile(&raster, params.z, params.x, params.y, 256, &bands) {
-        Ok((png_data, _)) => (
-            [(header::CONTENT_TYPE, "image/png")],
-            png_data,
-        )
-            .into_response(),
+    let result = crate::tile::render_raster_tile(&raster, params.z, params.x, params.y, 256, &bands);
+    match result {
+        Ok((png_data, _)) => {
+            crate::tile_cache::disk_cache_set(&path_str, params.z, params.x, params.y, resampling, &png_data);
+            let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
+            l2.insert(cache_key, png_data.clone());
+            ([(header::CONTENT_TYPE, "image/png")], png_data).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
@@ -782,11 +802,6 @@ pub(crate) async fn tms_get_tile(
         return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "TMS only supports raster layers").into_response();
     }
 
-    let raster = match crate::tile::get_raster(&path_str) {
-        Ok(r) => r,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    };
-
     let max_y = (1u64 << params.z) - 1;
     let xyz_y = if params.y as u64 <= max_y {
         (max_y - params.y as u64) as u32
@@ -794,13 +809,38 @@ pub(crate) async fn tms_get_tile(
         return (StatusCode::BAD_REQUEST, "Tile Y out of range").into_response();
     };
 
+    // Check L2 cache
+    let resampling = crate::resample::ResamplingMode::Nearest;
+    let cache_key = crate::tile_cache::TileCacheKey::new(&path_str, params.z, params.x, xyz_y, resampling);
+    {
+        let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
+        if let Some(cached) = l2.get(&cache_key) {
+            crate::tile_cache::record_l2_hit();
+            return ([(header::CONTENT_TYPE, "image/png")], cached.clone()).into_response();
+        }
+    }
+    if let Some(cached) = crate::tile_cache::disk_cache_get(&path_str, params.z, params.x, xyz_y, resampling) {
+        crate::tile_cache::record_l3_hit();
+        let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
+        l2.insert(cache_key, cached.clone());
+        return ([(header::CONTENT_TYPE, "image/png")], cached).into_response();
+    }
+    crate::tile_cache::record_miss();
+
+    let raster = match crate::tile::get_raster(&path_str) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    };
+
     let bands = get_bands(&raster);
-    match crate::tile::render_raster_tile(&raster, params.z, params.x, xyz_y, 256, &bands) {
-        Ok((png_data, _)) => (
-            [(header::CONTENT_TYPE, "image/png")],
-            png_data,
-        )
-            .into_response(),
+    let result = crate::tile::render_raster_tile(&raster, params.z, params.x, xyz_y, 256, &bands);
+    match result {
+        Ok((png_data, _)) => {
+            crate::tile_cache::disk_cache_set(&path_str, params.z, params.x, xyz_y, resampling, &png_data);
+            let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
+            l2.insert(cache_key, png_data.clone());
+            ([(header::CONTENT_TYPE, "image/png")], png_data).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
