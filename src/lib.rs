@@ -4,7 +4,7 @@ use axum::{
     http::{header, HeaderMap, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{delete, get, post},
     Extension, Json, Router,
 };
 use clap::Parser;
@@ -21,6 +21,8 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use utoipauto::utoipauto;
 
+use crate::registry::DataSourceRegistry;
+
 #[derive(Deserialize)]
 pub struct TileQueryParams {
     resampling: Option<String>,
@@ -29,10 +31,12 @@ pub struct TileQueryParams {
 }
 
 mod batch_render;
+mod data_source;
 #[cfg(feature = "gpu")]
 mod gpu_renderer;
 mod protocols;
 mod raster;
+mod registry;
 mod reproject;
 mod resample;
 mod shapefile_reader;
@@ -112,73 +116,22 @@ async fn filter_dotfiles(
     ),
     tag = "Files",
 )]
-async fn list_geo_files(root: Arc<String>) -> Json<Vec<tile::GeoFileInfo>> {
-    let mut files = Vec::new();
-    let dir = std::path::Path::new(root.as_str());
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase())
-                .unwrap_or_default();
-
-            let info = match ext.as_str() {
-                "tif" | "tiff" => {
-                    let path_str = path.to_string_lossy().to_string();
-                    match tile::get_raster_tile_info(&path_str) {
-                        Ok(info) => Some(tile::GeoFileInfo {
-                            name: name.clone(),
-                            path: name.clone(),
-                            data_type: "raster".to_string(),
-                            info,
-                        }),
-                        Err(e) => {
-                            tracing::warn!("Failed to read raster {}: {}", name, e);
-                            None
-                        }
-                    }
-                }
-                "geojson" | "json" | "wkt" | "kml" | "kmz" => {
-                    Some(tile::GeoFileInfo {
-                        name: name.clone(),
-                        path: name.clone(),
-                        data_type: "vector".to_string(),
-                        info: tile::get_vector_tile_info(),
-                    })
-                }
-                "shp" => {
-                    let path_str = path.to_string_lossy().to_string();
-                    match shapefile_reader::get_shapefile_info(&path_str) {
-                        Ok(info) => Some(tile::GeoFileInfo {
-                            name: name.clone(),
-                            path: name.clone(),
-                            data_type: "vector".to_string(),
-                            info,
-                        }),
-                        Err(e) => {
-                            tracing::warn!("Failed to read shapefile {}: {}", name, e);
-                            None
-                        }
-                    }
-                }
-                _ => None,
-            };
-            if let Some(f) = info {
-                files.push(f);
-            }
-        }
+fn source_to_geo_file(info: &data_source::DataSourceInfo) -> tile::GeoFileInfo {
+    tile::GeoFileInfo {
+        name: info.name.clone(),
+        path: info.name.clone(),
+        data_type: info.data_type.as_str().to_string(),
+        info: info.tile_info.clone(),
     }
+}
+
+async fn list_geo_files(registry: Arc<DataSourceRegistry>) -> Json<Vec<tile::GeoFileInfo>> {
+    let files: Vec<tile::GeoFileInfo> = registry.list().iter().map(source_to_geo_file).collect();
     Json(files)
+}
+
+async fn list_sources(registry: Arc<DataSourceRegistry>) -> Json<Vec<data_source::DataSourceInfo>> {
+    Json(registry.list())
 }
 
 #[utoipa::path(
@@ -196,34 +149,13 @@ async fn list_geo_files(root: Arc<String>) -> Json<Vec<tile::GeoFileInfo>> {
     tag = "Files",
 )]
 async fn get_tile_info(
-    root: Arc<String>,
+    registry: Arc<DataSourceRegistry>,
     Path(filename): Path<String>,
 ) -> Result<Json<tile::TileInfo>, (StatusCode, String)> {
-    let filepath = validate_path(root.as_str(), &filename)?;
-    let path_str = filepath.to_string_lossy().to_string();
-    let ext = filepath
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .unwrap_or_default();
-
-    match ext.as_str() {
-        "tif" | "tiff" => {
-            tile::get_raster_tile_info(&path_str)
-                .map(Json)
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
-        }
-        "geojson" | "json" | "wkt" | "kml" | "kmz" => Ok(Json(tile::get_vector_tile_info())),
-        "shp" => {
-            shapefile_reader::get_shapefile_info(&path_str)
-                .map(Json)
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
-        }
-        _ => Err((
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            format!("Unsupported format: .{}", ext),
-        )),
-    }
+    let source = registry
+        .get(&filename)
+        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
+    Ok(Json(source.info().tile_info))
 }
 
 #[utoipa::path(
@@ -243,70 +175,15 @@ async fn get_tile_info(
     tag = "Tiles",
 )]
 async fn get_raster_tile(
-    root: Arc<String>,
+    registry: Arc<DataSourceRegistry>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
     Query(params): Query<TileQueryParams>,
 ) -> Result<Response, (StatusCode, String)> {
-    let filepath = validate_path(root.as_str(), &filename)?;
-    let path_str = filepath.to_string_lossy().to_string();
-
-    let resampling = params.resampling.as_deref().map(resample::ResamplingMode::from_str).unwrap_or(resample::ResamplingMode::Nearest);
-
-    // Check L2 (memory) cache
-    let cache_key = tile_cache::TileCacheKey::new(&path_str, z, x, y, resampling);
-    {
-        let mut l2 = tile_cache::L2_CACHE.lock().unwrap();
-        if let Some(cached) = l2.get(&cache_key) {
-            tile_cache::record_l2_hit();
-            return Ok((
-                [(header::CONTENT_TYPE, "image/png")],
-                cached.clone(),
-            )
-                .into_response());
-        }
-    }
-
-    // Check L3 (disk) cache
-    if let Some(cached) = tile_cache::disk_cache_get(&path_str, z, x, y, resampling) {
-        tile_cache::record_l3_hit();
-        // Promote to L2
-        let mut l2 = tile_cache::L2_CACHE.lock().unwrap();
-        l2.insert(cache_key, cached.clone());
-        return Ok((
-            [(header::CONTENT_TYPE, "image/png")],
-            cached,
-        )
-            .into_response());
-    }
-
-    tile_cache::record_miss();
-
-    let raster = tile::get_raster(&path_str)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let stretch = params.stretch.as_deref().map(|s| resample::StretchConfig {
-        method: resample::StretchMethod::from_str(s),
-        std_dev_factor: params.std_dev_factor,
-    });
-
-    let (png_data, _rendered) = tile::render_raster_tile_ex(
-        &raster, z, x, y, 256, &[1, 2, 3],
-        Some(resampling), stretch.as_ref(),
-    )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    // Store in caches
-    tile_cache::disk_cache_set(&path_str, z, x, y, resampling, &png_data);
-    {
-        let mut l2 = tile_cache::L2_CACHE.lock().unwrap();
-        l2.insert(cache_key, png_data.clone());
-    }
-
-    Ok((
-        [(header::CONTENT_TYPE, "image/png")],
-        png_data,
-    )
-        .into_response())
+    let source = registry
+        .get(&filename)
+        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
+    let png = source.render_raster_tile(z, x, y, &params)?;
+    Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
 }
 
 #[utoipa::path(
@@ -326,60 +203,70 @@ async fn get_raster_tile(
     tag = "Tiles",
 )]
 async fn get_vector_tile(
-    root: Arc<String>,
+    registry: Arc<DataSourceRegistry>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
 ) -> Result<Response, (StatusCode, String)> {
-    let filepath = validate_path(root.as_str(), &filename)?;
-    let path_str = filepath.to_string_lossy().to_string();
+    let source = registry
+        .get(&filename)
+        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
+    let geojson = source.render_vector_tile(z, x, y)?;
+    Ok(([(header::CONTENT_TYPE, "application/geo+json")], geojson).into_response())
+}
 
+// ─── WebP 瓦片 ───
+
+async fn get_raster_tile_webp(
+    registry: Arc<DataSourceRegistry>,
+    Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
+) -> Result<Response, (StatusCode, String)> {
+    let source = registry
+        .get(&filename)
+        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
+    let webp = source.render_raster_tile_webp(z, x, y)?;
+    Ok(([(header::CONTENT_TYPE, "image/webp")], webp).into_response())
+}
+
+// ─── 动态挂载/卸载 ───
+
+#[derive(Deserialize)]
+pub struct MountRequest {
+    pub name: String,
+    pub path: String,
+}
+
+async fn mount_source(
+    registry: Arc<DataSourceRegistry>,
+    root: Arc<String>,
+    Json(req): Json<MountRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let filepath = validate_path(root.as_str(), &req.path)?;
+    let path_str = filepath.to_string_lossy().to_string();
     let ext = filepath
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
 
-    let req = tile::VectorTileRequest {
-        path: path_str,
-        z,
-        x,
-        y,
-    };
+    let source = data_source::create_file_source(req.name.clone(), path_str, &ext).ok_or((
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        format!("Unsupported file type: .{}", ext),
+    ))?;
 
-    let geojson = match ext.as_str() {
-        "shp" => tile::get_shapefile_tile_geojson(&req),
-        "wkt" => tile::get_wkt_tile_geojson(&req),
-        "kml" | "kmz" => tile::get_kml_tile_geojson(&req),
-        _ => tile::get_vector_tile_geojson(&req),
-    }
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    registry
+        .mount(req.name.clone(), source)
+        .map_err(|e| (StatusCode::CONFLICT, e))?;
 
-    Ok((
-        [(header::CONTENT_TYPE, "application/geo+json")],
-        geojson,
-    )
-        .into_response())
+    Ok(Json(serde_json::json!({"status": "ok", "name": req.name})))
 }
 
-// ─── WebP 瓦片 ───
-
-async fn get_raster_tile_webp(
-    root: Arc<String>,
-    Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
-) -> Result<Response, (StatusCode, String)> {
-    let filepath = validate_path(root.as_str(), &filename)?;
-    let path_str = filepath.to_string_lossy().to_string();
-
-    let raster = tile::get_raster(&path_str)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let (webp_data, _rendered) = tile::render_raster_tile_webp(&raster, z, x, y, 256, &[1, 2, 3])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    Ok((
-        [(header::CONTENT_TYPE, "image/webp")],
-        webp_data,
-    )
-        .into_response())
+async fn unmount_source(
+    registry: Arc<DataSourceRegistry>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    registry
+        .unmount(&name)
+        .map_err(|e| (StatusCode::NOT_FOUND, e))?;
+    Ok(Json(serde_json::json!({"status": "ok", "name": name})))
 }
 
 // ─── 批量渲染 ───
@@ -487,33 +374,6 @@ pub(crate) fn validate_path(root: &str, filename: &str) -> Result<std::path::Pat
     Ok(file_canonical)
 }
 
-pub(crate) fn scan_geo_files(root: &str) -> Vec<String> {
-    let dir = std::path::Path::new(root);
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase())
-                .unwrap_or_default();
-            if matches!(ext.as_str(), "tif" | "tiff" | "geojson" | "json" | "shp" | "wkt" | "kml" | "kmz") {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name != "openapi.json" {
-                        files.push(name.to_string());
-                    }
-                }
-            }
-        }
-    }
-    files.sort();
-    files
-}
-
 pub(crate) fn is_raster_ext(ext: &str) -> bool {
     matches!(ext, "tif" | "tiff")
 }
@@ -527,8 +387,7 @@ fn make_operation_id(base: &str, filename: &str) -> String {
     format!("{}_{}", base, safe)
 }
 
-fn build_dynamic_spec(root: &str) -> serde_json::Value {
-    let geo_files = scan_geo_files(root);
+fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
 
     let mut spec: serde_json::Value =
         serde_json::to_value(ApiDoc::openapi()).expect("Failed to serialize ApiDoc");
@@ -570,7 +429,7 @@ fn build_dynamic_spec(root: &str) -> serde_json::Value {
             continue;
         };
 
-        for filename in &geo_files {
+        for filename in geo_files {
             let ext = std::path::Path::new(filename)
                 .extension()
                 .and_then(|e| e.to_str())
@@ -628,6 +487,32 @@ fn build_dynamic_spec(root: &str) -> serde_json::Value {
     spec
 }
 
+fn scan_and_auto_mount(root: &str, registry: &DataSourceRegistry) {
+    let dir = std::path::Path::new(root);
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) if n != "openapi.json" => n.to_string(),
+            _ => continue,
+        };
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+        let path_str = path.to_string_lossy().to_string();
+        if let Some(source) = data_source::create_file_source(name.clone(), path_str, &ext) {
+            if let Err(e) = registry.mount(name, source) {
+                tracing::warn!("Failed to mount '{}': {}", path.display(), e);
+            }
+        }
+    }
+}
+
 // ─── 服务器启动 ───
 
 pub fn run() {
@@ -636,6 +521,9 @@ pub fn run() {
     tracing_subscriber::fmt::init();
 
     let root = cli.dir.clone().unwrap_or(cli.root);
+    let registry = Arc::new(DataSourceRegistry::new());
+    scan_and_auto_mount(&root, &registry);
+
     let root_arc = Arc::new(root.clone());
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -650,47 +538,67 @@ pub fn run() {
         let mut app = Router::new()
             .fallback_service(svc);
 
-        // 切片服务路由
-        app = app.route("/api/geo-files", get({
-            let root = root_arc.clone();
-            move || list_geo_files(root.clone())
+        // ─── Registry API ───
+
+        app = app.route("/api/sources", get({
+            let reg = registry.clone();
+            move || list_sources(reg.clone())
         }));
+
+        // 向后兼容
+        app = app.route("/api/geo-files", get({
+            let reg = registry.clone();
+            move || list_geo_files(reg.clone())
+        }));
+
+        app = app.route("/api/mount", post({
+            let reg = registry.clone();
+            let root = root_arc.clone();
+            move |body| mount_source(reg.clone(), root.clone(), body)
+        }));
+
+        app = app.route("/api/unmount/{name}", delete({
+            let reg = registry.clone();
+            move |path| unmount_source(reg.clone(), path)
+        }));
+
+        // ─── 切片服务路由 ───
 
         app = app.route(
             "/api/tiles/{filename}/info",
             get({
-                let root = root_arc.clone();
-                move |path| get_tile_info(root.clone(), path)
+                let reg = registry.clone();
+                move |path| get_tile_info(reg.clone(), path)
             }),
         );
 
         app = app.route(
             "/api/tiles/{filename}/png/{z}/{x}/{y}",
             get({
-                let root = root_arc.clone();
-                move |path, query| get_raster_tile(root.clone(), path, query)
+                let reg = registry.clone();
+                move |path, query| get_raster_tile(reg.clone(), path, query)
             }),
         );
 
         app = app.route(
             "/api/tiles/{filename}/geojson/{z}/{x}/{y}",
             get({
-                let root = root_arc.clone();
-                move |path| get_vector_tile(root.clone(), path)
+                let reg = registry.clone();
+                move |path| get_vector_tile(reg.clone(), path)
             }),
         );
 
         app = app.route(
             "/api/tiles/{filename}/webp/{z}/{x}/{y}",
             get({
-                let root = root_arc.clone();
-                move |path| get_raster_tile_webp(root.clone(), path)
+                let reg = registry.clone();
+                move |path| get_raster_tile_webp(reg.clone(), path)
             }),
         );
 
         app = app.route(
             "/api/batch-tiles",
-            axum::routing::post({
+            post({
                 let root = root_arc.clone();
                 move |body| batch_tiles(root.clone(), body)
             }),
@@ -701,68 +609,69 @@ pub fn run() {
         app = app.route(
             "/ogc/wms",
             get({
-                let root = root_arc.clone();
-                move |headers, query| protocols::wms_handler(root.clone(), headers, query)
+                let reg = registry.clone();
+                move |headers, query| protocols::wms_handler(reg.clone(), headers, query)
             }),
         );
 
         app = app.route(
             "/ogc/wmts/1.0.0/WMTSCapabilities.xml",
             get({
-                let root = root_arc.clone();
-                move |headers: HeaderMap| protocols::wmts_capabilities(root.clone(), headers)
+                let reg = registry.clone();
+                move |headers: HeaderMap| protocols::wmts_capabilities(reg.clone(), headers)
             }),
         );
 
         app = app.route(
             "/ogc/wmts/1.0.0/{layer}/default/GoogleMapsCompatible/{z}/{x}/{y}",
             get({
-                let root = root_arc.clone();
-                move |path| protocols::wmts_get_tile(root.clone(), path)
+                let reg = registry.clone();
+                move |path| protocols::wmts_get_tile(reg.clone(), path)
             }),
         );
 
         app = app.route(
             "/ogc/tms/1.0.0/",
             get({
-                let root = root_arc.clone();
-                move |headers: HeaderMap| protocols::tms_root(root.clone(), headers)
+                let reg = registry.clone();
+                move |headers: HeaderMap| protocols::tms_root(reg.clone(), headers)
             }),
         );
 
         app = app.route(
             "/ogc/tms/1.0.0/{layer}",
             get({
-                let root = root_arc.clone();
-                move |headers: HeaderMap, path: Path<String>| protocols::tms_layer(root.clone(), headers, path)
+                let reg = registry.clone();
+                move |headers: HeaderMap, path: Path<String>| protocols::tms_layer(reg.clone(), headers, path)
             }),
         );
 
         app = app.route(
             "/ogc/tms/1.0.0/{layer}/{z}/{x}/{y}",
             get({
-                let root = root_arc.clone();
-                move |path| protocols::tms_get_tile(root.clone(), path)
+                let reg = registry.clone();
+                move |path| protocols::tms_get_tile(reg.clone(), path)
             }),
         );
 
         app = app.route(
             "/ogc/tilejson/{filename}",
             get({
-                let root = root_arc.clone();
-                move |headers: HeaderMap, path: Path<String>| protocols::tilejson(root.clone(), headers, path)
+                let reg = registry.clone();
+                move |headers: HeaderMap, path: Path<String>| protocols::tilejson(reg.clone(), headers, path)
             }),
         );
 
-        // OpenAPI 文档（动态生成，包含当前目录文件列表）
-        let spec_value = build_dynamic_spec(&root);
+        // ─── OpenAPI 文档 ───
+
+        let filenames: Vec<String> = registry.list_names();
+        let spec_value = build_dynamic_spec(&filenames);
         if let Ok(json) = serde_json::to_string_pretty(&spec_value) {
             if let Err(e) = std::fs::write("openapi.json", &json) {
                 tracing::warn!("Failed to write openapi.json: {}", e);
             }
         }
 
-        // 打印所有展开的文件路由
         if let Some(paths) = spec_value.get("paths").and_then(|p| p.as_object()) {
             let mut file_routes: Vec<&str> = paths.keys().map(|k| k.as_str()).collect();
             file_routes.sort();
@@ -801,6 +710,7 @@ pub fn run() {
 
         tracing::info!("SimpleGeoServer started on http://{}", addr);
         tracing::info!("Serving files from {}", root);
+        tracing::info!("{} data source(s) mounted", registry.len());
         tracing::info!("Geo tile API available at http://{}/api/geo-files", addr);
         tracing::info!("API documentation at http://{}/docs", addr);
 
