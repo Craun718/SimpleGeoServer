@@ -534,6 +534,7 @@ pub(crate) async fn wmts_get_tile(
         resampling: None,
         stretch: None,
         std_dev_factor: None,
+        bands: None,
     };
 
     match source.render_raster_tile(params.z, params.x, params.y, &default_params) {
@@ -703,6 +704,7 @@ pub(crate) async fn tms_get_tile(
         resampling: None,
         stretch: None,
         std_dev_factor: None,
+        bands: None,
     };
 
     match source.render_raster_tile(params.z, params.x, xyz_y, &default_params) {

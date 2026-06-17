@@ -29,6 +29,7 @@ pub struct TileQueryParams {
     resampling: Option<String>,
     stretch: Option<String>,
     std_dev_factor: Option<f64>,
+    bands: Option<Vec<u32>>,
 }
 
 mod batch_render;
