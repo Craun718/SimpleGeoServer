@@ -94,6 +94,6 @@ pub fn decode_result_to_f64_vec(result: &tiff::decoder::DecodingResult) -> Vec<f
         tiff::decoder::DecodingResult::I16(v) => v.iter().map(|&x| x as f64).collect(),
         tiff::decoder::DecodingResult::I32(v) => v.iter().map(|&x| x as f64).collect(),
         tiff::decoder::DecodingResult::I64(v) => v.iter().map(|&x| x as f64).collect(),
-        _ => Vec::new(),
+        tiff::decoder::DecodingResult::F16(v) => v.iter().map(|&x| f64::from(x)).collect(),
     }
 }

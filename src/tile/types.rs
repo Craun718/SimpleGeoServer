@@ -1,6 +1,9 @@
+use std::fs::File;
+use std::io::BufReader;
+
 use serde::{Deserialize, Serialize};
+use tiff::decoder::{ChunkType, Decoder, Limits};
 use utoipa::ToSchema;
-use tiff::decoder::ChunkType;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InterleaveType {
@@ -46,28 +49,64 @@ pub struct RasterBlockIterator {
     blocks_y: u32,
     current_block: u32,
     bands: usize,
-    file_path: String,
+    decoder: Option<Decoder<BufReader<File>>>,
 }
 
 #[allow(dead_code)]
 impl RasterBlockIterator {
-    pub fn new(path: &str, ifd: &IfdInfo, config: RasterBlockConfig, bands: usize) -> Self {
+    pub fn new(ifd: IfdInfo, config: RasterBlockConfig, bands: usize) -> Self {
         let blocks_x = (ifd.width + config.block_width - 1) / config.block_width;
         let blocks_y = (ifd.height + config.block_height - 1) / config.block_height;
         Self {
-            ifd: ifd.clone(),
+            ifd,
             config,
             blocks_x,
             blocks_y,
             current_block: 0,
             bands,
-            file_path: path.to_string(),
+            decoder: None,
         }
     }
 
     pub fn next_block(&mut self) -> Option<Result<RasterBlock, String>> {
         if self.current_block >= self.blocks_x * self.blocks_y {
             return None;
+        }
+
+        if self.decoder.is_none() {
+            let file = match File::open(&self.ifd.file_path) {
+                Ok(f) => f,
+                Err(e) => return Some(Err(format!("Failed to open {}: {e}", self.ifd.file_path))),
+            };
+            let mut decoder = match Decoder::new(BufReader::new(file))
+                .map_err(|e| format!("Failed to create decoder: {e}"))
+                .and_then(|d| Ok(d.with_limits(Limits::unlimited())))
+            {
+                Ok(d) => d,
+                Err(e) => return Some(Err(e)),
+            };
+
+            if self.ifd.external {
+                if let Some(ptr) = self.ifd.ifd_ptr {
+                    if let Ok(dir) = decoder.read_directory(tiff::tags::IfdPointer(ptr)) {
+                        decoder.read_directory_tags(&dir);
+                    }
+                }
+            } else if self.ifd.index > 0 {
+                if let Ok(sub_val) = decoder.get_tag(tiff::tags::Tag::SubIfd) {
+                    if let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
+                        let sub_idx = self.ifd.index - 1;
+                        if sub_idx < ifd_ptrs.len() {
+                            let ptr = ifd_ptrs[sub_idx];
+                            if let Ok(dir) = decoder.read_directory(ptr) {
+                                decoder.read_directory_tags(&dir);
+                            }
+                        }
+                    }
+                }
+            }
+
+            self.decoder = Some(decoder);
         }
 
         let block_col = self.current_block % self.blocks_x;
@@ -83,9 +122,8 @@ impl RasterBlockIterator {
         let width_raw = (bw + overlap * 2).min(self.ifd.width - col_off_raw);
         let height_raw = (bh + overlap * 2).min(self.ifd.height - row_off_raw);
 
-        let data = match super::raster_load::read_raster_region(
-            &self.file_path,
-            None,
+        let data = match super::raster_load::read_raster_region_from_decoder(
+            self.decoder.as_mut().unwrap(),
             &self.ifd,
             col_off_raw,
             row_off_raw,
