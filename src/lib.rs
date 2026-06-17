@@ -37,6 +37,7 @@ mod gpu_renderer;
 mod protocols;
 mod raster;
 mod registry;
+mod render_farm;
 mod reproject;
 mod resample;
 mod shapefile_reader;

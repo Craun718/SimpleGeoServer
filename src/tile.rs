@@ -15,6 +15,12 @@ pub(crate) const C: f64 = R * std::f64::consts::PI;
 
 pub use crate::resample::{ResamplingMode, StretchConfig};
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum InterleaveType {
+    Chunky,
+    Planar,
+}
+
 // ─── Raster Block Iterator ───
 
 #[allow(dead_code)]
@@ -165,15 +171,17 @@ pub struct GeoFileInfo {
 
 #[derive(Debug, Clone)]
 pub(crate) struct IfdInfo {
-    index: usize,
-    width: u32,
-    height: u32,
-    chunk_type: ChunkType,
-    chunk_width: u32,
-    chunk_length: u32,
-    chunks_per_row: u32,
-    external: bool,
-    ifd_ptr: Option<u64>,
+    pub(crate) index: usize,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) chunk_type: ChunkType,
+    pub(crate) chunk_width: u32,
+    pub(crate) chunk_length: u32,
+    pub(crate) chunks_per_row: u32,
+    pub(crate) external: bool,
+    pub(crate) ifd_ptr: Option<u64>,
+    pub(crate) interleave: InterleaveType,
+    pub(crate) file_path: String,
 }
 
 #[allow(dead_code)]
@@ -189,6 +197,7 @@ pub(crate) struct CachedRaster {
     pub(crate) mean_values: Vec<f64>,
     pub(crate) std_dev_values: Vec<f64>,
     pub(crate) crs_type: String,
+    pub(crate) data_type: String,
     pub(crate) geo_key: crate::reproject::GeoKeyInfo,
     pub(crate) wgs84_corners: [(f64, f64); 4],
     pub(crate) native_corners: [(f64, f64); 4],
@@ -337,6 +346,8 @@ fn parse_ovr_ifd_offsets(
             chunks_per_row: cpr,
             external: true,
             ifd_ptr: Some(ifd_off),
+            interleave: crate::tile::InterleaveType::Chunky,
+            file_path: ovr_path.to_string(),
         });
 
         // Read next IFD offset
@@ -628,6 +639,11 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
         .dimensions()
         .map_err(|e| format!("Failed to read dimensions: {}", e))?;
 
+    let data_type = decoder
+        .colortype()
+        .map(|ct| format!("{:?}", ct))
+        .unwrap_or_else(|_| "Unknown".to_string());
+
     let no_data = crate::raster::read_nodata_value(&mut decoder);
 
     let chunk_type = decoder.get_chunk_type();
@@ -641,17 +657,35 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
         ChunkType::Tile => (width + chunk_w - 1) / chunk_w,
     };
 
+    let interleave = {
+        let planar = decoder
+            .find_tag_unsigned::<u16>(tiff::tags::Tag::PlanarConfiguration)
+            .ok()
+            .flatten()
+            .unwrap_or(1);
+        if planar == 2 { InterleaveType::Planar } else { InterleaveType::Chunky }
+    };
+
     let bands = {
-        let first_chunk = decoder
-            .read_chunk(0)
-            .map_err(|e| format!("Failed to read first chunk: {}", e))?;
-        let chunk_f64 = crate::raster::decode_result_to_f64_vec(&first_chunk);
-        let (w, h) = decoder.chunk_data_dimensions(0);
-        let chunk_pixels = (w * h) as usize;
-        if chunk_pixels > 0 && chunk_f64.len() >= chunk_pixels {
-            chunk_f64.len() / chunk_pixels
+        let tag_samples = decoder
+            .find_tag_unsigned::<u16>(tiff::tags::Tag::SamplesPerPixel)
+            .ok()
+            .flatten()
+            .map(|s| s as usize);
+        if let Some(spp) = tag_samples {
+            spp
         } else {
-            1
+            let first_chunk = decoder
+                .read_chunk(0)
+                .map_err(|e| format!("Failed to read first chunk: {}", e))?;
+            let chunk_f64 = crate::raster::decode_result_to_f64_vec(&first_chunk);
+            let (w, h) = decoder.chunk_data_dimensions(0);
+            let chunk_pixels = (w * h) as usize;
+            if chunk_pixels > 0 && chunk_f64.len() >= chunk_pixels {
+                chunk_f64.len() / chunk_pixels
+            } else {
+                1
+            }
         }
     };
 
@@ -665,6 +699,8 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
         chunks_per_row: cpr,
         external: false,
         ifd_ptr: None,
+        interleave,
+        file_path: path.to_string(),
     };
 
     let mut min_values = vec![f64::INFINITY; bands];
@@ -672,39 +708,74 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
     let mut valid_counts = vec![0u64; bands];
     let mut means = vec![0.0f64; bands];
     let mut m2 = vec![0.0f64; bands];
-    let mut percentile_samples: Vec<Vec<f64>> = (0..bands).map(|_| Vec::new()).collect();
+    const MAX_PERCENTILE_SAMPLES: usize = 50000;
+    let mut percentile_samples: Vec<Vec<f64>> = (0..bands)
+        .map(|_| Vec::with_capacity(MAX_PERCENTILE_SAMPLES))
+        .collect();
 
-    for chunk_idx in 0..total_chunks {
-        let chunk_data = decoder
-            .read_chunk(chunk_idx)
-            .map_err(|e| format!("Failed to read chunk {chunk_idx}: {e}"))?;
-        let chunk_f64 = crate::raster::decode_result_to_f64_vec(&chunk_data);
-        let (cdw, cdh) = decoder.chunk_data_dimensions(chunk_idx);
-        let pixels_in_chunk = cdw as usize * cdh as usize;
+    if interleave == InterleaveType::Planar {
+        let chunks_per_band = total_chunks / bands as u32;
+        for chunk_idx in 0..total_chunks {
+            let band = (chunk_idx / chunks_per_band) as usize;
+            if band >= bands { break; }
+            let chunk_data = decoder
+                .read_chunk(chunk_idx)
+                .map_err(|e| format!("Failed to read chunk {chunk_idx}: {e}"))?;
+            let chunk_f64 = crate::raster::decode_result_to_f64_vec(&chunk_data);
+            let (cdw, cdh) = decoder.chunk_data_dimensions(chunk_idx);
+            let pixels_in_chunk = cdw as usize * cdh as usize;
+            for p in 0..pixels_in_chunk {
+                if p >= chunk_f64.len() { break; }
+                let val = chunk_f64[p];
+                if crate::raster::is_nodata(val, no_data) { continue; }
+                valid_counts[band] += 1;
+                let n = valid_counts[band] as f64;
+                let delta = val - means[band];
+                means[band] += delta / n;
+                let delta2 = val - means[band];
+                m2[band] += delta * delta2;
+                if val < min_values[band] { min_values[band] = val; }
+                if val > max_values[band] { max_values[band] = val; }
+                if percentile_samples[band].len() < MAX_PERCENTILE_SAMPLES {
+                    percentile_samples[band].push(val);
+                }
+            }
+        }
+    } else {
+        for chunk_idx in 0..total_chunks {
+            let chunk_data = decoder
+                .read_chunk(chunk_idx)
+                .map_err(|e| format!("Failed to read chunk {chunk_idx}: {e}"))?;
+            let chunk_f64 = crate::raster::decode_result_to_f64_vec(&chunk_data);
+            let (cdw, cdh) = decoder.chunk_data_dimensions(chunk_idx);
+            let pixels_in_chunk = cdw as usize * cdh as usize;
 
-        for p in 0..pixels_in_chunk {
-            for b in 0..bands {
-                let idx = p * bands + b;
-                if idx >= chunk_f64.len() {
-                    break;
+            for p in 0..pixels_in_chunk {
+                for b in 0..bands {
+                    let idx = p * bands + b;
+                    if idx >= chunk_f64.len() {
+                        break;
+                    }
+                    let val = chunk_f64[idx];
+                    if crate::raster::is_nodata(val, no_data) {
+                        continue;
+                    }
+                    valid_counts[b] += 1;
+                    let n = valid_counts[b] as f64;
+                    let delta = val - means[b];
+                    means[b] += delta / n;
+                    let delta2 = val - means[b];
+                    m2[b] += delta * delta2;
+                    if val < min_values[b] {
+                        min_values[b] = val;
+                    }
+                    if val > max_values[b] {
+                        max_values[b] = val;
+                    }
+                    if percentile_samples[b].len() < MAX_PERCENTILE_SAMPLES {
+                        percentile_samples[b].push(val);
+                    }
                 }
-                let val = chunk_f64[idx];
-                if crate::raster::is_nodata(val, no_data) {
-                    continue;
-                }
-                valid_counts[b] += 1;
-                let n = valid_counts[b] as f64;
-                let delta = val - means[b];
-                means[b] += delta / n;
-                let delta2 = val - means[b];
-                m2[b] += delta * delta2;
-                if val < min_values[b] {
-                    min_values[b] = val;
-                }
-                if val > max_values[b] {
-                    max_values[b] = val;
-                }
-                percentile_samples[b].push(val);
             }
         }
     }
@@ -797,7 +868,7 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
     let mut all_ifds = vec![base_ifd];
     if let Ok(sub_val) = decoder2.get_tag(tiff::tags::Tag::SubIfd) {
         if let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
-            for (_i, ptr) in ifd_ptrs.iter().enumerate() {
+            for (i, ptr) in ifd_ptrs.iter().enumerate() {
                 if let Ok(dir) = decoder2.read_directory(*ptr) {
                     let mut sub_reader = decoder2.read_directory_tags(&dir);
                     if let (Ok(Some(sub_w)), Ok(Some(sub_h))) = (
@@ -808,6 +879,7 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
                             ChunkType::Strip => 1u32,
                             ChunkType::Tile => (sub_w + chunk_w - 1) / chunk_w,
                         };
+                        tracing::info!("Found sub-IFD {}: {}x{}", i, sub_w, sub_h);
                         all_ifds.push(IfdInfo {
                             index: all_ifds.len(),
                             width: sub_w,
@@ -818,6 +890,8 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
                             chunks_per_row: sub_cpr,
                             external: false,
                             ifd_ptr: None,
+                            interleave,
+                            file_path: path.to_string(),
                         });
                     }
                 }
@@ -869,6 +943,7 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
         bands,
         geo_transform,
         no_data,
+        data_type,
         min_values,
         max_values,
         mean_values: means,
@@ -931,6 +1006,19 @@ fn select_ifd_for_zoom(raster: &CachedRaster, z: u32) -> usize {
 }
 
 fn read_geo_transform_tile(path: &str) -> [f64; 6] {
+    let tfw_path = std::path::Path::new(path).with_extension("tfw");
+    if tfw_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&tfw_path) {
+            let values: Vec<f64> = content
+                .lines()
+                .filter_map(|l| l.trim().parse::<f64>().ok())
+                .collect();
+            if values.len() == 6 {
+                return [values[4], values[0], values[1], values[5], values[2], values[3]];
+            }
+        }
+    }
+
     if let Ok(file) = File::open(path) {
         if let Ok(mut decoder) = Decoder::new(BufReader::new(file)) {
             if let Ok(tiepoint) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelTiepointTag) {
@@ -955,7 +1043,7 @@ fn read_geo_transform_tile(path: &str) -> [f64; 6] {
 
 // ─── 栅格区域读取 ───
 
-fn read_raster_region(
+pub(crate) fn read_raster_region(
     path: &str,
     ovr_path: Option<&str>,
     ifd: &IfdInfo,
@@ -1737,7 +1825,7 @@ pub fn render_map_bbox(
 
 // ─── 瓦片坐标数学 ───
 
-fn tile_bounds_epsg3857(z: u32, x: u32, y: u32, tile_size: u32) -> (f64, f64, f64, f64) {
+pub(crate) fn tile_bounds_epsg3857(z: u32, x: u32, y: u32, tile_size: u32) -> (f64, f64, f64, f64) {
     let n = (1u64 << z) as f64;
     let res = 2.0 * C / (tile_size as f64 * n);
     let min_x = -C + x as f64 * tile_size as f64 * res;
@@ -1747,17 +1835,17 @@ fn tile_bounds_epsg3857(z: u32, x: u32, y: u32, tile_size: u32) -> (f64, f64, f6
     (min_x, min_y, max_x, max_y)
 }
 
-fn mercator_to_lng(merc_x: f64) -> f64 {
+pub(crate) fn mercator_to_lng(merc_x: f64) -> f64 {
     merc_x * 180.0 / C
 }
 
-fn mercator_to_lat(merc_y: f64) -> f64 {
+pub(crate) fn mercator_to_lat(merc_y: f64) -> f64 {
     let val = (merc_y / R).exp();
     let lat_rad = 2.0 * (val.atan() - std::f64::consts::FRAC_PI_4);
     lat_rad.to_degrees()
 }
 
-fn clamp_lat(lat: f64) -> f64 {
+pub(crate) fn clamp_lat(lat: f64) -> f64 {
     const MAX_LAT: f64 = 85.051129;
     lat.clamp(-MAX_LAT, MAX_LAT)
 }

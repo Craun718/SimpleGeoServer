@@ -52,3 +52,4 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 utoipauto = "0.2"
 quick-xml = { version = "0.40", features = ["serialize"] }
 tempfile = "3"
+webp = "0.3"
