@@ -27,9 +27,8 @@ fn test_outside_tile_returns_transparent_png() {
         let info = tile::get_raster_tile_info(&path).unwrap();
         let extent = info.extent;
 
-        // Pick a zoom where tile (0, 0) is guaranteed to be outside any dataset extent
-        // Zoom 5 tile (0,0) covers lon ~ -180 to -168.75, lat ~ 66.5 to 85.05 (far NW)
-        let zoom = 5;
+        let base_z = info.max_zoom.min(10).max(1);
+        let zoom = base_z.saturating_sub(3).max(1);
         let (png_data, rendered) = tile::render_raster_tile(
             &tile::get_raster(&path).unwrap(),
             zoom,
@@ -42,7 +41,7 @@ fn test_outside_tile_returns_transparent_png() {
 
         assert_eq!(
             rendered, 0,
-            "{file}: tile (z=5, x=0, y=0) should have 0 rendered pixels, got {rendered} (extent: {extent:?})",
+            "{file}: tile (z={zoom}, x=0, y=0) should have 0 rendered pixels, got {rendered} (extent: {extent:?})",
         );
 
         // Verify PNG is fully transparent
@@ -110,7 +109,8 @@ fn test_adjacent_outside_tile_is_empty() {
     let info = tile::get_raster_tile_info(&path).unwrap();
     let extent = info.extent;
 
-    let zoom = info.max_zoom.min(10).max(1);
+    let base_z = info.max_zoom.min(10).max(1);
+    let zoom = base_z + 3;
 
     // Tile containing the center
     let cx = (extent[0] + extent[2]) / 2.0;
