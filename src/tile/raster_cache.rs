@@ -390,6 +390,16 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
                 tracing::warn!("Failed to parse .ovr file '{}': {}", ovr_path, e);
             }
         }
+    } else {
+        // Auto-generate .ovr in background when none exists
+        let path_clone = path.to_string();
+        std::thread::spawn(move || {
+            if let Err(e) = super::raster_ovr::generate_ovr(&path_clone) {
+                tracing::warn!("generate_ovr failed for {}: {}", path_clone, e);
+            } else {
+                tracing::info!("Auto-generated .ovr for {}", path_clone);
+            }
+        });
     }
 
     std::mem::drop(decoder2);
