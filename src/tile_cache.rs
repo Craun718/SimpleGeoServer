@@ -83,6 +83,8 @@ pub struct TileCacheKey {
     pub x: u32,
     pub y: u32,
     pub resampling: u8,
+    /// 0 = PNG, 1 = WebP
+    pub format: u8,
 }
 
 impl TileCacheKey {
@@ -93,6 +95,18 @@ impl TileCacheKey {
             x,
             y,
             resampling: resampling as u8,
+            format: 0,
+        }
+    }
+
+    pub fn new_webp(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode) -> Self {
+        Self {
+            layer_hash: get_content_hash(path),
+            z,
+            x,
+            y,
+            resampling: resampling as u8,
+            format: 1,
         }
     }
 }
@@ -183,18 +197,19 @@ fn get_disk_cache_dir() -> &'static Path {
     })
 }
 
-fn tile_cache_path(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode) -> PathBuf {
+fn tile_cache_path(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode, is_webp: bool) -> PathBuf {
     let hash = get_content_hash(path);
     let res_str = resampling as u8;
+    let ext = if is_webp { "webp" } else { "png" };
     get_disk_cache_dir()
         .join(format!("{}_{}", hash, res_str))
         .join(z.to_string())
         .join(x.to_string())
-        .join(format!("{}.png", y))
+        .join(format!("{}.{}", y, ext))
 }
 
-pub fn disk_cache_get(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode) -> Option<Vec<u8>> {
-    let p = tile_cache_path(path, z, x, y, resampling);
+pub fn disk_cache_get(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode, is_webp: bool) -> Option<Vec<u8>> {
+    let p = tile_cache_path(path, z, x, y, resampling, is_webp);
     if p.exists() {
         std::fs::read(p).ok()
     } else {
@@ -202,8 +217,8 @@ pub fn disk_cache_get(path: &str, z: u32, x: u32, y: u32, resampling: Resampling
     }
 }
 
-pub fn disk_cache_set(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode, data: &[u8]) {
-    let p = tile_cache_path(path, z, x, y, resampling);
+pub fn disk_cache_set(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode, is_webp: bool, data: &[u8]) {
+    let p = tile_cache_path(path, z, x, y, resampling, is_webp);
     if let Some(parent) = p.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

@@ -84,7 +84,7 @@ pub fn render_tiles_parallel(jobs: Vec<BatchTileJob>, max_workers: usize) -> Vec
 fn render_single(raster: &Arc<CachedRaster>, job: &BatchTileJob) -> Result<BatchTileResult, String> {
     let (png_data, rendered) = crate::tile::render_raster_tile_ex(
         raster, job.z, job.x, job.y, 256, &job.bands,
-        Some(job.resampling), job.stretch.as_ref(),
+        Some(job.resampling), job.stretch.as_ref(), false,
     )?;
 
     Ok(BatchTileResult {

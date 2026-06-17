@@ -13,7 +13,7 @@ pub fn render_raster_tile(
     size: u32,
     bands: &[u32],
 ) -> Result<(Vec<u8>, u32), String> {
-    render_raster_tile_ex(raster, z, x, y, size, bands, None, None)
+    render_raster_tile_ex(raster, z, x, y, size, bands, None, None, false)
 }
 
 pub fn render_raster_tile_ex(
@@ -25,6 +25,7 @@ pub fn render_raster_tile_ex(
     bands: &[u32],
     resampling: Option<ResamplingMode>,
     stretch: Option<&StretchConfig>,
+    return_rgba: bool,
 ) -> Result<(Vec<u8>, u32), String> {
     let ifd_idx = select_ifd_for_zoom(raster, z);
     let active_ifd = &raster.ifds[ifd_idx];
@@ -330,15 +331,18 @@ pub fn render_raster_tile_ex(
         }
     }
 
-    let mut png_bytes = Vec::new();
-    {
-        let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
-        encoder
-            .write_image(&img, size, size, image::ExtendedColorType::Rgba8)
-            .map_err(|e| format!("PNG encode error: {}", e))?;
+    if return_rgba {
+        Ok((img.into_raw(), rendered))
+    } else {
+        let mut png_bytes = Vec::new();
+        {
+            let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+            encoder
+                .write_image(&img, size, size, image::ExtendedColorType::Rgba8)
+                .map_err(|e| format!("PNG encode error: {}", e))?;
+        }
+        Ok((png_bytes, rendered))
     }
-
-    Ok((png_bytes, rendered))
 }
 
 pub fn render_raster_tile_webp(
@@ -349,17 +353,10 @@ pub fn render_raster_tile_webp(
     size: u32,
     bands: &[u32],
 ) -> Result<(Vec<u8>, u32), String> {
-    let (rgba_data, rendered) = render_raster_tile(raster, z, x, y, size, bands)?;
-
-    let img = image::load_from_memory(&rgba_data)
-        .map_err(|e| format!("Failed to reload PNG: {}", e))?;
-    let mut webp_bytes = Vec::new();
-    let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut webp_bytes);
-    encoder
-        .encode(img.as_rgba8().unwrap(), size, size, image::ExtendedColorType::Rgba8)
-        .map_err(|e| format!("WebP encode error: {}", e))?;
-
-    Ok((webp_bytes, rendered))
+    let (rgba, rendered) = render_raster_tile_ex(raster, z, x, y, size, bands, None, None, true)?;
+    let encoder = webp::Encoder::from_rgba(&rgba, size, size);
+    let webp = encoder.encode(90.0);
+    Ok((webp.to_vec(), rendered))
 }
 
 pub fn render_map_bbox(
@@ -695,21 +692,15 @@ pub fn render_single_tile(
     resampling: ResamplingMode,
     format: &str,
 ) -> Result<(Vec<u8>, u32, String), String> {
-    let (png_data, rendered) =
-        render_raster_tile_ex(raster, z, x, y, size, bands, Some(resampling), stretch)?;
-    let data = match format {
+    let (data, rendered) = match format {
         "raw-rgba" => {
-            let img = image::load_from_memory(&png_data)
-                .map_err(|e| format!("Failed to decode rendered tile: {}", e))?;
-            encode_tile_rgba(&img.into_rgba8())
+            render_raster_tile_ex(raster, z, x, y, size, bands, Some(resampling), stretch, true)?
         }
-        "png" | _ => png_data,
+        "png" | _ => {
+            render_raster_tile_ex(raster, z, x, y, size, bands, Some(resampling), stretch, false)?
+        }
     };
     Ok((data, rendered, format.to_string()))
-}
-
-fn encode_tile_rgba(img: &RgbaImage) -> Vec<u8> {
-    img.as_raw().clone()
 }
 
 pub(crate) fn render_raster_tile_cpu_rgba(
