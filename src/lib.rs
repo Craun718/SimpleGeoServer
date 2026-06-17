@@ -7,9 +7,10 @@ use axum::{
     routing::{delete, get, post},
     Extension, Json, Router,
 };
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::{
     compression::CompressionLayer,
@@ -31,54 +32,70 @@ pub struct TileQueryParams {
 }
 
 mod batch_render;
-mod data_source;
+pub mod config;
+pub(crate) mod data_source;
 #[cfg(feature = "gpu")]
-mod gpu_renderer;
-mod protocols;
+pub mod gpu_renderer;
+pub(crate) mod protocols;
 pub mod raster;
 mod registry;
-mod render_farm;
-mod reproject;
-mod resample;
-mod shapefile_reader;
+pub mod render_farm;
+pub mod reproject;
+pub mod resample;
+pub(crate) mod shapefile_reader;
 pub mod tile;
-mod tile_cache;
+pub mod tile_cache;
 
 #[derive(Parser)]
 #[command(name = "SimpleGeoServer", about = "A simple HTTP static file server with tile serving")]
 pub struct Cli {
-    #[arg(short, long, default_value_t = 4)]
-    pub threads: u32,
+    #[command(subcommand)]
+    pub command: Option<Commands>,
 
-    #[arg(short = 'f', long, default_value_t = false)]
-    pub full_data: bool,
+    #[arg(short, long)]
+    pub config: Option<PathBuf>,
 
-    #[arg(short, long, default_value_t = 8080)]
-    pub port: u16,
+    #[arg(short, long)]
+    pub threads: Option<u32>,
 
-    #[arg(short, long, default_value = "0.0.0.0")]
-    pub address: String,
+    #[arg(short = 'f', long)]
+    pub full_data: Option<bool>,
 
-    #[arg(short = 'd', long, default_value = ".")]
-    pub root: String,
+    #[arg(short, long)]
+    pub port: Option<u16>,
+
+    #[arg(short, long)]
+    pub address: Option<String>,
+
+    #[arg(short = 'd', long)]
+    pub root: Option<String>,
 
     #[arg()]
     pub dir: Option<String>,
 
-    #[arg(long, default_value_t = 3600)]
-    pub cache: i32,
+    #[arg(long)]
+    pub cache_max_age: Option<i32>,
 
-    #[arg(long, default_value_t = false)]
-    pub cors: bool,
+    #[arg(long)]
+    pub cors: Option<bool>,
 
-    #[arg(short, long, default_value_t = false)]
-    pub gzip: bool,
+    #[arg(short, long)]
+    pub gzip: Option<bool>,
 
-    #[arg(long, default_value_t = false)]
-    pub no_dotfiles: bool,
+    #[arg(long)]
+    pub no_dotfiles: Option<bool>,
 
-    #[arg(long, default_value = "default")]
-    pub log_format: String,
+    #[arg(long)]
+    pub log_format: Option<String>,
+
+    #[arg(long)]
+    pub l2_cache_mb: Option<u64>,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Generate a default config.yaml in the current directory
+    Init,
 }
 
 async fn set_cache_header(
@@ -105,6 +122,12 @@ async fn filter_dotfiles(
         return StatusCode::NOT_FOUND.into_response();
     }
     next.run(req).await
+}
+
+// ─── 健康检查 ───
+
+async fn health() -> &'static str {
+    "OK"
 }
 
 // ─── 切片服务处理器 ───
@@ -294,10 +317,12 @@ async fn batch_tiles(
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let filepath = validate_path(root.as_str(), &req.filename)?;
     let path_str = filepath.to_string_lossy().to_string();
-    let resampling = req.resampling.as_deref().map(resample::ResamplingMode::from_str).unwrap_or(resample::ResamplingMode::Nearest);
+    let resampling = req.resampling.as_deref().map(resample::ResamplingMode::from_str).unwrap_or(resample::ResamplingMode::NearestNeighbor);
     let bands = req.bands.clone().unwrap_or_else(|| vec![1, 2, 3]);
     let stretch = req.stretch.as_deref().map(|s| resample::StretchConfig {
         method: resample::StretchMethod::from_str(s),
+        min_percent: None,
+        max_percent: None,
         std_dev_factor: None,
     });
 
@@ -343,7 +368,23 @@ async fn batch_tiles(
 )]
 struct ApiDoc;
 
-pub(crate) fn validate_path(root: &str, filename: &str) -> Result<std::path::PathBuf, (StatusCode, String)> {
+pub fn directory_size_bytes(path: &std::path::Path) -> Result<u64, String> {
+    let mut total = 0u64;
+    if path.is_dir() {
+        for entry in std::fs::read_dir(path).map_err(|e| format!("Read dir: {e}"))? {
+            let entry = entry.map_err(|e| format!("Entry: {e}"))?;
+            let ft = entry.file_type().map_err(|e| format!("FileType: {e}"))?;
+            if ft.is_dir() {
+                total += directory_size_bytes(&entry.path())?;
+            } else {
+                total += entry.metadata().map_err(|e| format!("Metadata: {e}"))?.len();
+            }
+        }
+    }
+    Ok(total)
+}
+
+pub fn validate_path(root: &str, filename: &str) -> Result<std::path::PathBuf, (StatusCode, String)> {
     let p = std::path::Path::new(filename);
     for c in p.components() {
         match c {
@@ -375,11 +416,11 @@ pub(crate) fn validate_path(root: &str, filename: &str) -> Result<std::path::Pat
     Ok(file_canonical)
 }
 
-pub(crate) fn is_raster_ext(ext: &str) -> bool {
+pub fn is_raster_ext(ext: &str) -> bool {
     matches!(ext, "tif" | "tiff")
 }
 
-pub(crate) fn is_vector_ext(ext: &str) -> bool {
+pub fn is_vector_ext(ext: &str) -> bool {
     matches!(ext, "geojson" | "json" | "shp" | "wkt" | "kml" | "kmz")
 }
 
@@ -514,21 +555,94 @@ fn scan_and_auto_mount(root: &str, registry: &DataSourceRegistry) {
     }
 }
 
+fn load_config_file(path: &Option<std::path::PathBuf>) -> Option<config::AppConfig> {
+    let p = path.as_ref()?;
+    match config::load_config(p) {
+        Ok(cfg) => {
+            tracing::info!("Loaded config from {}", p.display());
+            Some(cfg)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load config: {e}");
+            None
+        }
+    }
+}
+
+macro_rules! merge_opt {
+    ($cli:expr, $cfg:expr, $default:expr) => {
+        $cli.clone().or_else(|| $cfg.clone()).unwrap_or($default)
+    };
+}
+
 // ─── 服务器启动 ───
 
 pub fn run() {
     let cli = Cli::parse();
 
+    if matches!(cli.command, Some(Commands::Init)) {
+        let path = PathBuf::from("config.yaml");
+        match config::generate_default_config(&path) {
+            Ok(()) => {
+                println!("Default config written to {}", path.display());
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     tracing_subscriber::fmt::init();
 
-    let root = cli.dir.clone().unwrap_or(cli.root);
+    let file_config = load_config_file(&cli.config).unwrap_or_default();
+    let server_cfg = file_config.server.as_ref();
+    let cache_cfg = file_config.cache.as_ref();
+
+    let threads = merge_opt!(cli.threads, server_cfg.and_then(|s| s.threads), 4u32);
+    let port = merge_opt!(cli.port, server_cfg.and_then(|s| s.port), 8080u16);
+    let address = merge_opt!(cli.address, server_cfg.and_then(|s| s.address.clone()), "0.0.0.0".to_string());
+    let root_from_cli = merge_opt!(cli.root, server_cfg.and_then(|s| s.root.clone()), ".".to_string());
+    let root = cli.dir.clone().unwrap_or(root_from_cli);
+    let cache_max_age = merge_opt!(cli.cache_max_age, server_cfg.and_then(|s| s.cache_max_age), 3600i32);
+    let cors = merge_opt!(cli.cors, server_cfg.and_then(|s| s.cors), false);
+    let gzip = merge_opt!(cli.gzip, server_cfg.and_then(|s| s.gzip), false);
+    let no_dotfiles = merge_opt!(cli.no_dotfiles, server_cfg.and_then(|s| s.no_dotfiles), false);
+    let l2_cache_mb = merge_opt!(cli.l2_cache_mb, cache_cfg.and_then(|s| s.l2_size_mb), 512u64);
+
+    // Apply cache config before any tile operations
+    tile_cache::set_l2_cache_size_mb(l2_cache_mb);
+    if let Some(dir) = cache_cfg.and_then(|s| s.disk_dir.clone()) {
+        tile_cache::set_disk_cache_dir(&dir);
+    }
+
     let registry = Arc::new(DataSourceRegistry::new());
+
+    // Mount sources from config file
+    if let Some(sources) = &file_config.sources {
+        for src in sources {
+            let ext = std::path::Path::new(&src.path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase())
+                .unwrap_or_default();
+            if let Some(source) = data_source::create_file_source(src.name.clone(), src.path.clone(), &ext) {
+                if let Err(e) = registry.mount(src.name.clone(), source) {
+                    tracing::warn!("Failed to mount '{}' from config: {}", src.name, e);
+                }
+            } else {
+                tracing::warn!("Unsupported file type for source '{}': .{}", src.name, ext);
+            }
+        }
+    }
+
     scan_and_auto_mount(&root, &registry);
 
     let root_arc = Arc::new(root.clone());
 
     let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(cli.threads.max(1) as usize)
+        .worker_threads(threads.max(1) as usize)
         .enable_all()
         .build()
         .unwrap();
@@ -538,6 +652,10 @@ pub fn run() {
 
         let mut app = Router::new()
             .fallback_service(svc);
+
+        // ─── 健康检查 ───
+
+        app = app.route("/health", get(health));
 
         // ─── Registry API ───
 
@@ -687,25 +805,25 @@ pub fn run() {
             SwaggerUi::new("/docs").external_url_unchecked("/api-docs/openapi.json", spec_value),
         );
 
-        let cache_arc = Arc::new(cli.cache as i64);
+        let cache_arc = Arc::new(cache_max_age as i64);
         app = app.layer(middleware::from_fn(set_cache_header));
         app = app.layer(Extension(cache_arc));
 
-        if cli.no_dotfiles {
+        if no_dotfiles {
             app = app.layer(middleware::from_fn(filter_dotfiles));
         }
 
-        if cli.cors {
+        if cors {
             app = app.layer(CorsLayer::permissive());
         }
 
-        if cli.gzip {
+        if gzip {
             app = app.layer(CompressionLayer::new());
         }
 
         app = app.layer(TraceLayer::new_for_http());
 
-        let addr: SocketAddr = format!("{}:{}", cli.address, cli.port)
+        let addr: SocketAddr = format!("{}:{}", address, port)
             .parse()
             .expect("Invalid address or port");
 

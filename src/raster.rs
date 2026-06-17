@@ -35,21 +35,29 @@ pub fn read_nodata_value(decoder: &mut Decoder<BufReader<File>>) -> Option<f64> 
 }
 
 pub fn parse_nodata_string(raw: &str) -> Option<f64> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("nan") {
+    let cleaned = raw.trim().trim_end_matches('\0').trim();
+    if cleaned.is_empty() {
         return None;
     }
-    trimmed.parse::<f64>().ok()
+    let first = cleaned.split_whitespace().next()?;
+    match first.to_ascii_lowercase().as_str() {
+        "nan" => Some(f64::NAN),
+        "inf" | "+inf" | "infinity" | "+infinity" => Some(f64::INFINITY),
+        "-inf" | "-infinity" => Some(f64::NEG_INFINITY),
+        _ => first.parse::<f64>().ok(),
+    }
 }
 
 pub fn is_nodata(val: f64, nodata: Option<f64>) -> bool {
+    if !val.is_finite() {
+        return true;
+    }
     match nodata {
-        Some(nd) => (val - nd).abs() < f64::EPSILON || val.is_nan() || val.is_infinite(),
-        None => val.is_nan() || val.is_infinite(),
+        Some(nd) if nd.is_finite() => val == nd,
+        _ => false,
     }
 }
 
-#[allow(dead_code)]
 pub fn crs_string_from_geo_key(geo_key: &crate::reproject::GeoKeyInfo) -> String {
     if let Some(model) = geo_key.model_type {
         match model {

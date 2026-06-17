@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use geo::BoundingRect;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 #[allow(dead_code)]
 pub(crate) struct CachedShapefile {
@@ -14,8 +14,8 @@ pub(crate) struct CachedShapefile {
     pub(crate) extent: [f64; 4],
 }
 
-static SHAPEFILE_CACHE: Lazy<RwLock<HashMap<String, Arc<CachedShapefile>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
+static SHAPEFILE_CACHE: LazyLock<RwLock<HashMap<String, Arc<CachedShapefile>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 fn convert_shapes(
     shapes: Vec<shapefile::Shape>,

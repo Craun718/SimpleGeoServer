@@ -1,7 +1,7 @@
 #![cfg(feature = "gpu")]
 #![allow(dead_code)]
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use crate::resample::{ResamplingMode, StretchConfig};
 use crate::tile::CachedRaster;
@@ -273,7 +273,7 @@ pub struct TileRenderResult {
     pub rendered_pixels: u32,
 }
 
-pub static GPU_RENDERER: Lazy<Option<GpuRenderer>> = Lazy::new(|| match pollster::block_on(
+pub static GPU_RENDERER: LazyLock<Option<GpuRenderer>> = LazyLock::new(|| match pollster::block_on(
     GpuRenderer::new(),
 ) {
     Ok(renderer) => {
@@ -464,7 +464,7 @@ impl GpuRenderer {
             band_g: band_indices.get(1).copied().unwrap_or(0) as u32,
             band_b: band_indices.get(2).copied().unwrap_or(0) as u32,
             resampling: match resampling {
-                ResamplingMode::Nearest => 0,
+                ResamplingMode::NearestNeighbor => 0,
                 ResamplingMode::Bilinear => 1,
                 ResamplingMode::Bicubic => 2,
                 ResamplingMode::Lanczos3 => 1,

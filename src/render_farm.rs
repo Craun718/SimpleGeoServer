@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use tokio::sync::oneshot;
 
 #[cfg(feature = "gpu")]
@@ -49,7 +49,7 @@ struct PendingResponse {
     _submit_time: Instant,
 }
 
-pub(crate) struct RenderFarm {
+pub struct RenderFarm {
     queue: Mutex<BinaryHeap<TileJob>>,
     pending: Mutex<std::collections::HashMap<(u32, u32, u32), PendingResponse>>,
     _next_job_id: AtomicU64,
@@ -126,7 +126,7 @@ impl RenderFarm {
     }
 }
 
-pub(crate) static RENDER_FARM: Lazy<Arc<RenderFarm>> = Lazy::new(|| {
+pub static RENDER_FARM: LazyLock<Arc<RenderFarm>> = LazyLock::new(|| {
     let farm = Arc::new(RenderFarm::new());
 
     let num_workers = std::thread::available_parallelism()
@@ -500,7 +500,7 @@ fn render_raster_tile_cpu_rgba(
                 let mut pixel_is_nodata = false;
 
                 match resampling {
-                    ResamplingMode::Nearest => {
+                    ResamplingMode::NearestNeighbor => {
                         let ds_col = buf_col.round() as i64;
                         let ds_row = buf_row.round() as i64;
                         if ds_col >= 0 && ds_col < read_w_u as i64 && ds_row >= 0 && ds_row < read_h_u as i64 {

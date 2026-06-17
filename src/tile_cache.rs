@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
-
-use once_cell::sync::Lazy;
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use crate::resample::ResamplingMode;
 
@@ -13,7 +11,7 @@ use crate::resample::ResamplingMode;
 
 const CONTENT_HASH_READ_SIZE: u64 = 4096;
 
-pub(crate) fn get_content_hash(path: &str) -> String {
+pub fn get_content_hash(path: &str) -> String {
     {
         let cache = CONTENT_HASH_CACHE.lock().unwrap();
         if let Some(hash) = cache.get(path) {
@@ -34,8 +32,8 @@ pub(crate) fn get_content_hash(path: &str) -> String {
     }
 }
 
-static CONTENT_HASH_CACHE: Lazy<Mutex<HashMap<String, String>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+pub(crate) static CONTENT_HASH_CACHE: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn file_content_hash(path: &str) -> Result<String, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("Failed to open for hash: {e}"))?;
@@ -79,7 +77,7 @@ fn file_content_hash(path: &str) -> Result<String, String> {
 // ─── Tile Cache Key ───
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub(crate) struct TileCacheKey {
+pub struct TileCacheKey {
     pub layer_hash: String,
     pub z: u32,
     pub x: u32,
@@ -107,7 +105,7 @@ struct MemCacheEntry {
     last_access: u64,
 }
 
-pub(crate) struct MemCache {
+pub struct MemCache {
     entries: HashMap<TileCacheKey, MemCacheEntry>,
     max_bytes: u64,
     current_bytes: u64,
@@ -168,21 +166,34 @@ impl MemCache {
 
 // ─── L3 Disk Cache ───
 
-static TILE_DISK_CACHE_DIR: Lazy<tempfile::TempDir> =
-    Lazy::new(|| tempfile::tempdir().expect("Failed to create temp dir for tile cache"));
+static DISK_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_disk_cache_dir(path: &str) {
+    if let Err(existing) = DISK_CACHE_DIR.set(PathBuf::from(path)) {
+        tracing::warn!("Disk cache dir already set to {:?}, ignoring", existing);
+    }
+}
+
+#[allow(deprecated)]
+fn get_disk_cache_dir() -> &'static Path {
+    DISK_CACHE_DIR.get_or_init(|| {
+        let tmp = tempfile::tempdir().expect("Failed to create temp dir for tile cache");
+        tracing::info!("Using temp dir for disk cache: {:?}", tmp.path());
+        tmp.into_path()
+    })
+}
 
 fn tile_cache_path(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode) -> PathBuf {
     let hash = get_content_hash(path);
     let res_str = resampling as u8;
-    TILE_DISK_CACHE_DIR
-        .path()
+    get_disk_cache_dir()
         .join(format!("{}_{}", hash, res_str))
         .join(z.to_string())
         .join(x.to_string())
         .join(format!("{}.png", y))
 }
 
-pub(crate) fn disk_cache_get(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode) -> Option<Vec<u8>> {
+pub fn disk_cache_get(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode) -> Option<Vec<u8>> {
     let p = tile_cache_path(path, z, x, y, resampling);
     if p.exists() {
         std::fs::read(p).ok()
@@ -191,7 +202,7 @@ pub(crate) fn disk_cache_get(path: &str, z: u32, x: u32, y: u32, resampling: Res
     }
 }
 
-pub(crate) fn disk_cache_set(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode, data: &[u8]) {
+pub fn disk_cache_set(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode, data: &[u8]) {
     let p = tile_cache_path(path, z, x, y, resampling);
     if let Some(parent) = p.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -199,10 +210,15 @@ pub(crate) fn disk_cache_set(path: &str, z: u32, x: u32, y: u32, resampling: Res
     let _ = std::fs::write(&p, data);
 }
 
+pub fn disk_cache_size_bytes() -> u64 {
+    crate::directory_size_bytes(get_disk_cache_dir()).unwrap_or(0)
+}
+
 #[allow(dead_code)]
-pub(crate) fn clear_disk_cache() {
-    let _ = std::fs::remove_dir_all(TILE_DISK_CACHE_DIR.path());
-    let _ = std::fs::create_dir_all(TILE_DISK_CACHE_DIR.path());
+pub fn clear_disk_cache() {
+    let dir = get_disk_cache_dir();
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::create_dir_all(dir);
 }
 
 // ─── Cache Stats ───
@@ -211,12 +227,12 @@ static CACHE_HITS_L2: AtomicU64 = AtomicU64::new(0);
 static CACHE_HITS_L3: AtomicU64 = AtomicU64::new(0);
 static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
 
-pub(crate) fn record_l2_hit() { CACHE_HITS_L2.fetch_add(1, Ordering::Relaxed); }
-pub(crate) fn record_l3_hit() { CACHE_HITS_L3.fetch_add(1, Ordering::Relaxed); }
-pub(crate) fn record_miss() { CACHE_MISSES.fetch_add(1, Ordering::Relaxed); }
+pub fn record_l2_hit() { CACHE_HITS_L2.fetch_add(1, Ordering::Relaxed); }
+pub fn record_l3_hit() { CACHE_HITS_L3.fetch_add(1, Ordering::Relaxed); }
+pub fn record_miss() { CACHE_MISSES.fetch_add(1, Ordering::Relaxed); }
 
 #[allow(dead_code)]
-pub(crate) fn cache_stats() -> (u64, u64, u64) {
+pub fn cache_stats() -> (u64, u64, u64) {
     (
         CACHE_HITS_L2.load(Ordering::Relaxed),
         CACHE_HITS_L3.load(Ordering::Relaxed),
@@ -226,5 +242,11 @@ pub(crate) fn cache_stats() -> (u64, u64, u64) {
 
 // ─── Global L2 Cache ───
 
-pub(crate) static L2_CACHE: Lazy<Mutex<MemCache>> =
-    Lazy::new(|| Mutex::new(MemCache::new(512)));
+static L2_CACHE_MAX_MB: AtomicU64 = AtomicU64::new(512);
+
+pub fn set_l2_cache_size_mb(mb: u64) {
+    L2_CACHE_MAX_MB.store(mb, Ordering::Relaxed);
+}
+
+pub static L2_CACHE: LazyLock<Mutex<MemCache>> =
+    LazyLock::new(|| Mutex::new(MemCache::new(L2_CACHE_MAX_MB.load(Ordering::Relaxed))));

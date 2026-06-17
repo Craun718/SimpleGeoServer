@@ -1,0 +1,18 @@
+server:
+  port: 8080
+  address: 0.0.0.0
+  threads: 4
+  root: .
+  cache_max_age: 3600
+  cors: false
+  gzip: false
+  no_dotfiles: false
+  log_format: default
+sources:
+- name: example-raster
+  path: ./data/raster.tif
+- name: example-vector
+  path: ./data/vector.geojson
+cache:
+  l2_size_mb: 512
+  disk_dir: ./cache/tiles

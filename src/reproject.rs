@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use geo::{Coord, Geometry, MapCoords};
 use geodesy::prelude::*;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use tiff::decoder::Decoder;
 use tiff::tags::Tag;
 use tiff::TiffResult;
@@ -86,7 +86,7 @@ impl GeodesyEngine {
     }
 }
 
-static GEODESY: Lazy<Mutex<GeodesyEngine>> = Lazy::new(|| Mutex::new(GeodesyEngine::new()));
+static GEODESY: LazyLock<Mutex<GeodesyEngine>> = LazyLock::new(|| Mutex::new(GeodesyEngine::new()));
 
 fn wgs84_to_crs(lng_deg: f64, lat_deg: f64, epsg: u16) -> Option<(f64, f64)> {
     if epsg == 4326 {

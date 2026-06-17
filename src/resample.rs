@@ -1,9 +1,12 @@
+use serde::{Deserialize, Serialize};
+
 use crate::tile::CachedRaster;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 #[repr(u8)]
 pub enum ResamplingMode {
-    Nearest,
+    NearestNeighbor,
     Bilinear,
     Bicubic,
     Lanczos3,
@@ -12,24 +15,32 @@ pub enum ResamplingMode {
 impl ResamplingMode {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
+            "nearest" | "nearest-neighbor" => ResamplingMode::NearestNeighbor,
             "bilinear" => ResamplingMode::Bilinear,
             "bicubic" => ResamplingMode::Bicubic,
             "lanczos" | "lanczos3" => ResamplingMode::Lanczos3,
-            _ => ResamplingMode::Nearest,
+            _ => ResamplingMode::NearestNeighbor,
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StretchConfig {
     pub method: StretchMethod,
+    #[serde(default)]
+    pub min_percent: Option<f64>,
+    #[serde(default)]
+    pub max_percent: Option<f64>,
+    #[serde(default)]
     pub std_dev_factor: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum StretchMethod {
     MinMax,
     Percentile,
+    #[serde(rename = "standard-deviation")]
     StdDev,
 }
 

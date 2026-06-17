@@ -108,7 +108,7 @@ impl DataSource for RasterDataSource {
             .resampling
             .as_deref()
             .map(crate::resample::ResamplingMode::from_str)
-            .unwrap_or(crate::resample::ResamplingMode::Nearest);
+            .unwrap_or(crate::resample::ResamplingMode::NearestNeighbor);
 
         let cache_key = crate::tile_cache::TileCacheKey::new(&self.path, z, x, y, resampling);
         {
@@ -130,6 +130,8 @@ impl DataSource for RasterDataSource {
 
         let stretch = params.stretch.as_deref().map(|s| crate::resample::StretchConfig {
             method: crate::resample::StretchMethod::from_str(s),
+            min_percent: None,
+            max_percent: None,
             std_dev_factor: params.std_dev_factor,
         });
 

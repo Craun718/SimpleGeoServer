@@ -1,0 +1,188 @@
+use std::fs::File;
+use std::io::BufReader;
+
+use tiff::decoder::{ChunkType, Decoder, Limits};
+
+pub fn select_ifd_for_zoom(raster: &super::types::CachedRaster, z: u32) -> usize {
+    if raster.ifds.len() <= 1 {
+        return 0;
+    }
+    let size = 256u32;
+    let (min_x, _min_y, max_x, _max_y) = super::tile_math::tile_bounds_epsg3857(z, 0, 0, size);
+    let tile_width_m = (max_x - min_x).abs();
+    let tile_res_meters = tile_width_m / size as f64;
+
+    let is_geographic = raster.crs_type == "Geographic" || raster.crs_type == "Unknown";
+    let base_m_per_px = if is_geographic {
+        raster.geo_transform[1].abs() * 111320.0
+    } else {
+        raster.geo_transform[1].abs()
+    };
+
+    if base_m_per_px <= 0.0 || tile_res_meters <= 0.0 {
+        return 0;
+    }
+
+    let mut best_idx = 0usize;
+    let mut best_diff = f64::INFINITY;
+    for (i, ifd) in raster.ifds.iter().enumerate() {
+        let scale = raster.width as f64 / ifd.width as f64;
+        let ifd_res = base_m_per_px * scale;
+        let diff = (ifd_res - tile_res_meters).abs();
+        if diff < best_diff {
+            best_diff = diff;
+            best_idx = i;
+        }
+    }
+    best_idx
+}
+
+pub fn read_raster_region(
+    path: &str,
+    ovr_path: Option<&str>,
+    ifd: &super::types::IfdInfo,
+    col_off: u32,
+    row_off: u32,
+    width: u32,
+    height: u32,
+    bands: usize,
+    step: u32,
+) -> Result<Vec<f64>, String> {
+    let file = if ifd.external {
+        let ovr = ovr_path.ok_or_else(|| "External IFD but no .ovr path provided".to_string())?;
+        File::open(ovr).map_err(|e| format!("Failed to open .ovr for region read: {}", e))?
+    } else {
+        File::open(path).map_err(|e| format!("Failed to open for region read: {}", e))?
+    };
+    let mut decoder = Decoder::new(BufReader::new(file))
+        .map_err(|e| format!("Failed to create decoder for region: {}", e))?
+        .with_limits(Limits::unlimited());
+
+    if ifd.external {
+        if let Some(ptr) = ifd.ifd_ptr {
+            if let Ok(dir) = decoder.read_directory(tiff::tags::IfdPointer(ptr)) {
+                decoder.read_directory_tags(&dir);
+            }
+        }
+    } else if ifd.index > 0 {
+        if let Ok(sub_val) = decoder.get_tag(tiff::tags::Tag::SubIfd) {
+            if let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
+                let sub_idx = ifd.index - 1;
+                if sub_idx < ifd_ptrs.len() {
+                    let ptr = ifd_ptrs[sub_idx];
+                    if let Ok(dir) = decoder.read_directory(ptr) {
+                        decoder.read_directory_tags(&dir);
+                    }
+                }
+            }
+        }
+    }
+
+    let out_h = (height + step - 1) / step;
+    let out_w = (width + step - 1) / step;
+    let total_pixels = out_w as usize * out_h as usize;
+    let mut result = vec![0.0f64; total_pixels * bands];
+
+    match ifd.chunk_type {
+        ChunkType::Strip => {
+            let strip_len = ifd.chunk_length;
+            for s in 0..ifd.height {
+                let row_in_raster = row_off + s;
+                if row_in_raster >= ifd.height {
+                    break;
+                }
+                let strip_idx = (row_in_raster / strip_len) as u32;
+                if let Ok(data) = decoder.read_chunk(strip_idx) {
+                    let f64_data = crate::raster::decode_result_to_f64_vec(&data);
+                    let ch = decoder.chunk_data_dimensions(strip_idx);
+                    let strip_row_offset = row_in_raster % strip_len;
+                    let _cols = ifd.width as usize;
+
+                    if s % step == 0 {
+                        let out_row = (s / step) as usize;
+                        for c in 0..width {
+                            if c % step == 0 {
+                                let col_in_raster = col_off + c;
+                                let out_col = (c / step) as usize;
+                                let in_idx = (strip_row_offset * ch.0 as u32 + col_in_raster) as usize;
+                                let out_idx = (out_row * out_w as usize + out_col) * bands;
+                                for b in 0..bands {
+                                    let src_idx = in_idx * bands + b;
+                                    if src_idx < f64_data.len() {
+                                        result[out_idx + b] = f64_data[src_idx];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ChunkType::Tile => {
+            let tile_w = ifd.chunk_width;
+            let tile_h = ifd.chunk_length;
+            for t in 0.. {
+                let tile_x = t % ifd.chunks_per_row;
+                let tile_y = t / ifd.chunks_per_row;
+                let tile_col = tile_x * tile_w;
+                let tile_row = tile_y * tile_h;
+
+                if tile_col >= col_off + width && tile_row >= row_off + height {
+                    break;
+                }
+                if tile_col > col_off + width || tile_row > row_off + height {
+                    if tile_y > row_off / tile_h + height / tile_h + 1 {
+                        break;
+                    }
+                    continue;
+                }
+                if t >= decoder.tile_count().unwrap_or(u32::MAX) {
+                    break;
+                }
+
+                if let Ok(data) = decoder.read_chunk(t) {
+                    let f64_data = crate::raster::decode_result_to_f64_vec(&data);
+
+                    let over_x = if tile_col >= col_off { 0u32 } else { col_off - tile_col };
+                    let over_y = if tile_row >= row_off { 0u32 } else { row_off - tile_row };
+
+                    let read_w = tile_w.saturating_sub(over_x).min(width.saturating_sub(tile_col.saturating_sub(col_off)));
+                    let read_h = tile_h.saturating_sub(over_y).min(height.saturating_sub(tile_row.saturating_sub(row_off)));
+
+                    for ly in 0..read_h {
+                        if ly % step != 0 {
+                            continue;
+                        }
+                        for lx in 0..read_w {
+                            if lx % step != 0 {
+                                continue;
+                            }
+                            let raster_col = tile_col + over_x + lx;
+                            let raster_row = tile_row + over_y + ly;
+                            if raster_col >= col_off + width || raster_row >= row_off + height {
+                                continue;
+                            }
+
+                            let out_col = ((raster_col - col_off) / step) as usize;
+                            let out_row = ((raster_row - row_off) / step) as usize;
+
+                            let in_col = over_x + lx;
+                            let in_row = over_y + ly;
+                            let in_idx = (in_row * tile_w + in_col) as usize;
+                            let out_idx = (out_row * out_w as usize + out_col) * bands;
+
+                            for b in 0..bands {
+                                let src_idx = in_idx * bands + b;
+                                if src_idx < f64_data.len() {
+                                    result[out_idx + b] = f64_data[src_idx];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
