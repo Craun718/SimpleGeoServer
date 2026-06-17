@@ -1,11 +1,11 @@
 use axum::{
+    Extension, Json, Router,
     body::Body,
     extract::{Path, Query},
-    http::{header, HeaderMap, Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
-    Extension, Json, Router,
 };
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
@@ -13,10 +13,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::{
-    compression::CompressionLayer,
-    cors::CorsLayer,
-    services::ServeDir,
-    trace::TraceLayer,
+    compression::CompressionLayer, cors::CorsLayer, services::ServeDir, trace::TraceLayer,
 };
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -48,7 +45,10 @@ pub mod tile;
 pub mod tile_cache;
 
 #[derive(Parser)]
-#[command(name = "SimpleGeoServer", about = "A simple HTTP static file server with tile serving")]
+#[command(
+    name = "SimpleGeoServer",
+    about = "A simple HTTP static file server with tile serving"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -114,10 +114,7 @@ async fn set_cache_header(
     res
 }
 
-async fn filter_dotfiles(
-    req: Request<Body>,
-    next: Next,
-) -> Response {
+async fn filter_dotfiles(req: Request<Body>, next: Next) -> Response {
     let path = req.uri().path();
     if path.split('/').any(|s| !s.is_empty() && s.starts_with('.')) {
         return StatusCode::NOT_FOUND.into_response();
@@ -177,9 +174,10 @@ async fn get_tile_info(
     registry: Arc<DataSourceRegistry>,
     Path(filename): Path<String>,
 ) -> Result<Json<tile::TileInfo>, (StatusCode, String)> {
-    let source = registry
-        .get(&filename)
-        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
+    let source = registry.get(&filename).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Source not found: {}", filename),
+    ))?;
     Ok(Json(source.info().tile_info))
 }
 
@@ -204,9 +202,10 @@ async fn get_raster_tile(
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
     Query(params): Query<TileQueryParams>,
 ) -> Result<Response, (StatusCode, String)> {
-    let source = registry
-        .get(&filename)
-        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
+    let source = registry.get(&filename).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Source not found: {}", filename),
+    ))?;
     let png = source.render_raster_tile(z, x, y, &params)?;
     Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
 }
@@ -231,9 +230,10 @@ async fn get_vector_tile(
     registry: Arc<DataSourceRegistry>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
 ) -> Result<Response, (StatusCode, String)> {
-    let source = registry
-        .get(&filename)
-        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
+    let source = registry.get(&filename).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Source not found: {}", filename),
+    ))?;
     let geojson = source.render_vector_tile(z, x, y)?;
     Ok(([(header::CONTENT_TYPE, "application/geo+json")], geojson).into_response())
 }
@@ -244,9 +244,10 @@ async fn get_raster_tile_webp(
     registry: Arc<DataSourceRegistry>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
 ) -> Result<Response, (StatusCode, String)> {
-    let source = registry
-        .get(&filename)
-        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
+    let source = registry.get(&filename).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("Source not found: {}", filename),
+    ))?;
     let webp = source.render_raster_tile_webp(z, x, y)?;
     Ok(([(header::CONTENT_TYPE, "image/webp")], webp).into_response())
 }
@@ -318,7 +319,11 @@ async fn batch_tiles(
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let filepath = validate_path(root.as_str(), &req.filename)?;
     let path_str = filepath.to_string_lossy().to_string();
-    let resampling = req.resampling.as_deref().map(resample::ResamplingMode::from_str).unwrap_or(resample::ResamplingMode::NearestNeighbor);
+    let resampling = req
+        .resampling
+        .as_deref()
+        .map(resample::ResamplingMode::from_str)
+        .unwrap_or(resample::ResamplingMode::NearestNeighbor);
     let bands = req.bands.clone().unwrap_or_else(|| vec![1, 2, 3]);
     let stretch = req.stretch.as_deref().map(|s| resample::StretchConfig {
         method: resample::StretchMethod::from_str(s),
@@ -327,31 +332,38 @@ async fn batch_tiles(
         std_dev_factor: None,
     });
 
-    let jobs: Vec<batch_render::BatchTileJob> = req.tiles.iter().map(|t| batch_render::BatchTileJob {
-        path: path_str.clone(),
-        z: t.z,
-        x: t.x,
-        y: t.y,
-        bands: bands.clone(),
-        resampling,
-        stretch: stretch.clone(),
-        priority: t.z,
-    }).collect();
+    let jobs: Vec<batch_render::BatchTileJob> = req
+        .tiles
+        .iter()
+        .map(|t| batch_render::BatchTileJob {
+            path: path_str.clone(),
+            z: t.z,
+            x: t.x,
+            y: t.y,
+            bands: bands.clone(),
+            resampling,
+            stretch: stretch.clone(),
+            priority: t.z,
+        })
+        .collect();
 
     let results = batch_render::render_tiles_parallel(jobs, 4);
-    let json_results: Vec<serde_json::Value> = results.into_iter().map(|(_, r)| match r {
-        Ok(tile) => {
-            serde_json::json!({
-                "status": "ok",
-                "z": tile.z,
-                "x": tile.x,
-                "y": tile.y,
-                "bytes": tile.data.len(),
-                "rendered": tile.rendered,
-            })
-        }
-        Err(e) => serde_json::json!({"status": "error", "error": e}),
-    }).collect();
+    let json_results: Vec<serde_json::Value> = results
+        .into_iter()
+        .map(|(_, r)| match r {
+            Ok(tile) => {
+                serde_json::json!({
+                    "status": "ok",
+                    "z": tile.z,
+                    "x": tile.x,
+                    "y": tile.y,
+                    "bytes": tile.data.len(),
+                    "rendered": tile.rendered,
+                })
+            }
+            Err(e) => serde_json::json!({"status": "error", "error": e}),
+        })
+        .collect();
 
     Ok(Json(json_results))
 }
@@ -360,13 +372,11 @@ async fn batch_tiles(
 
 #[utoipauto]
 #[derive(OpenApi)]
-#[openapi(
-    info(
-        title = "SimpleGeoServer API",
-        description = "Geospatial file server with raster and vector tile serving",
-        version = "0.1.0",
-    ),
-)]
+#[openapi(info(
+    title = "SimpleGeoServer API",
+    description = "Geospatial file server with raster and vector tile serving",
+    version = "0.1.0",
+))]
 struct ApiDoc;
 
 pub fn directory_size_bytes(path: &std::path::Path) -> Result<u64, String> {
@@ -378,14 +388,20 @@ pub fn directory_size_bytes(path: &std::path::Path) -> Result<u64, String> {
             if ft.is_dir() {
                 total += directory_size_bytes(&entry.path())?;
             } else {
-                total += entry.metadata().map_err(|e| format!("Metadata: {e}"))?.len();
+                total += entry
+                    .metadata()
+                    .map_err(|e| format!("Metadata: {e}"))?
+                    .len();
             }
         }
     }
     Ok(total)
 }
 
-pub fn validate_path(root: &str, filename: &str) -> Result<std::path::PathBuf, (StatusCode, String)> {
+pub fn validate_path(
+    root: &str,
+    filename: &str,
+) -> Result<std::path::PathBuf, (StatusCode, String)> {
     let p = std::path::Path::new(filename);
     for c in p.components() {
         match c {
@@ -401,15 +417,24 @@ pub fn validate_path(root: &str, filename: &str) -> Result<std::path::PathBuf, (
 
     let filepath = std::path::Path::new(root).join(filename);
     if !filepath.exists() {
-        return Err((StatusCode::NOT_FOUND, format!("File not found: {}", filename)));
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("File not found: {}", filename),
+        ));
     }
 
-    let root_canonical = std::path::Path::new(root)
-        .canonicalize()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Invalid root directory".into()))?;
-    let file_canonical = filepath
-        .canonicalize()
-        .map_err(|_| (StatusCode::NOT_FOUND, format!("File not found: {}", filename)))?;
+    let root_canonical = std::path::Path::new(root).canonicalize().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Invalid root directory".into(),
+        )
+    })?;
+    let file_canonical = filepath.canonicalize().map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("File not found: {}", filename),
+        )
+    })?;
     if !file_canonical.starts_with(&root_canonical) {
         return Err((StatusCode::BAD_REQUEST, "Path traversal detected".into()));
     }
@@ -431,7 +456,6 @@ fn make_operation_id(base: &str, filename: &str) -> String {
 }
 
 fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
-
     let mut spec: serde_json::Value =
         serde_json::to_value(ApiDoc::openapi()).expect("Failed to serialize ApiDoc");
 
@@ -450,7 +474,10 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
     if let Some(info) = spec.get_mut("info") {
         info["description"] = serde_json::Value::String(description);
         info["x-geo-files"] = serde_json::Value::Array(
-            geo_files.iter().map(|f| serde_json::Value::String(f.clone())).collect(),
+            geo_files
+                .iter()
+                .map(|f| serde_json::Value::String(f.clone()))
+                .collect(),
         );
     }
 
@@ -463,7 +490,11 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
         return spec;
     };
 
-    let template_paths: Vec<String> = paths_obj.keys().filter(|k| k.contains("{filename}")).cloned().collect();
+    let template_paths: Vec<String> = paths_obj
+        .keys()
+        .filter(|k| k.contains("{filename}"))
+        .cloned()
+        .collect();
 
     let mut concrete_paths: Vec<(String, serde_json::Value)> = Vec::new();
 
@@ -495,13 +526,20 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
                 // Remove filename from parameters
                 if let Some(params) = get_op.get_mut("parameters") {
                     if let Some(arr) = params.as_array_mut() {
-                        arr.retain(|p| p.get("name") != Some(&serde_json::Value::String("filename".to_string())));
+                        arr.retain(|p| {
+                            p.get("name")
+                                != Some(&serde_json::Value::String("filename".to_string()))
+                        });
                     }
                 }
 
                 // Set unique operationId
-                let base_op_id = get_op.get("operationId").and_then(|v| v.as_str()).unwrap_or("operation");
-                get_op["operationId"] = serde_json::Value::String(make_operation_id(base_op_id, filename));
+                let base_op_id = get_op
+                    .get("operationId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("operation");
+                get_op["operationId"] =
+                    serde_json::Value::String(make_operation_id(base_op_id, filename));
 
                 // Set meaningful summary
                 let tag = if template_path.contains("/info") {
@@ -511,7 +549,8 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
                 } else {
                     "vector tile (GeoJSON)"
                 };
-                get_op["summary"] = serde_json::Value::String(format!("Get {} for {}", tag, filename));
+                get_op["summary"] =
+                    serde_json::Value::String(format!("Get {} for {}", tag, filename));
             }
 
             concrete_paths.push((concrete_path, item));
@@ -532,7 +571,9 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
 
 fn scan_and_auto_mount(root: &str, registry: &DataSourceRegistry) {
     let dir = std::path::Path::new(root);
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {
@@ -603,14 +644,34 @@ pub fn run() {
 
     let threads = merge_opt!(cli.threads, server_cfg.and_then(|s| s.threads), 4u32);
     let port = merge_opt!(cli.port, server_cfg.and_then(|s| s.port), 8080u16);
-    let address = merge_opt!(cli.address, server_cfg.and_then(|s| s.address.clone()), "0.0.0.0".to_string());
-    let root_from_cli = merge_opt!(cli.root, server_cfg.and_then(|s| s.root.clone()), ".".to_string());
+    let address = merge_opt!(
+        cli.address,
+        server_cfg.and_then(|s| s.address.clone()),
+        "0.0.0.0".to_string()
+    );
+    let root_from_cli = merge_opt!(
+        cli.root,
+        server_cfg.and_then(|s| s.root.clone()),
+        ".".to_string()
+    );
     let root = cli.dir.clone().unwrap_or(root_from_cli);
-    let cache_max_age = merge_opt!(cli.cache_max_age, server_cfg.and_then(|s| s.cache_max_age), 3600i32);
+    let cache_max_age = merge_opt!(
+        cli.cache_max_age,
+        server_cfg.and_then(|s| s.cache_max_age),
+        3600i32
+    );
     let cors = merge_opt!(cli.cors, server_cfg.and_then(|s| s.cors), false);
     let gzip = merge_opt!(cli.gzip, server_cfg.and_then(|s| s.gzip), false);
-    let no_dotfiles = merge_opt!(cli.no_dotfiles, server_cfg.and_then(|s| s.no_dotfiles), false);
-    let l2_cache_mb = merge_opt!(cli.l2_cache_mb, cache_cfg.and_then(|s| s.l2_size_mb), 512u64);
+    let no_dotfiles = merge_opt!(
+        cli.no_dotfiles,
+        server_cfg.and_then(|s| s.no_dotfiles),
+        false
+    );
+    let l2_cache_mb = merge_opt!(
+        cli.l2_cache_mb,
+        cache_cfg.and_then(|s| s.l2_size_mb),
+        512u64
+    );
 
     // Apply cache config before any tile operations
     tile_cache::set_l2_cache_size_mb(l2_cache_mb);
@@ -628,7 +689,9 @@ pub fn run() {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_lowercase())
                 .unwrap_or_default();
-            if let Some(source) = data_source::create_file_source(src.name.clone(), src.path.clone(), &ext) {
+            if let Some(source) =
+                data_source::create_file_source(src.name.clone(), src.path.clone(), &ext)
+            {
                 if let Err(e) = registry.mount(src.name.clone(), source) {
                     tracing::warn!("Failed to mount '{}' from config: {}", src.name, e);
                 }
@@ -651,8 +714,7 @@ pub fn run() {
     rt.block_on(async move {
         let svc = ServeDir::new(&root).append_index_html_on_directories(true);
 
-        let mut app = Router::new()
-            .fallback_service(svc);
+        let mut app = Router::new().fallback_service(svc);
 
         // ─── 健康检查 ───
 
@@ -660,27 +722,39 @@ pub fn run() {
 
         // ─── Registry API ───
 
-        app = app.route("/api/sources", get({
-            let reg = registry.clone();
-            move || list_sources(reg.clone())
-        }));
+        app = app.route(
+            "/api/sources",
+            get({
+                let reg = registry.clone();
+                move || list_sources(reg.clone())
+            }),
+        );
 
         // 向后兼容
-        app = app.route("/api/geo-files", get({
-            let reg = registry.clone();
-            move || list_geo_files(reg.clone())
-        }));
+        app = app.route(
+            "/api/geo-files",
+            get({
+                let reg = registry.clone();
+                move || list_geo_files(reg.clone())
+            }),
+        );
 
-        app = app.route("/api/mount", post({
-            let reg = registry.clone();
-            let root = root_arc.clone();
-            move |body| mount_source(reg.clone(), root.clone(), body)
-        }));
+        app = app.route(
+            "/api/mount",
+            post({
+                let reg = registry.clone();
+                let root = root_arc.clone();
+                move |body| mount_source(reg.clone(), root.clone(), body)
+            }),
+        );
 
-        app = app.route("/api/unmount/{name}", delete({
-            let reg = registry.clone();
-            move |path| unmount_source(reg.clone(), path)
-        }));
+        app = app.route(
+            "/api/unmount/{name}",
+            delete({
+                let reg = registry.clone();
+                move |path| unmount_source(reg.clone(), path)
+            }),
+        );
 
         // ─── 切片服务路由 ───
 
@@ -762,7 +836,9 @@ pub fn run() {
             "/ogc/tms/1.0.0/{layer}",
             get({
                 let reg = registry.clone();
-                move |headers: HeaderMap, path: Path<String>| protocols::tms_layer(reg.clone(), headers, path)
+                move |headers: HeaderMap, path: Path<String>| {
+                    protocols::tms_layer(reg.clone(), headers, path)
+                }
             }),
         );
 
@@ -778,7 +854,9 @@ pub fn run() {
             "/ogc/tilejson/{filename}",
             get({
                 let reg = registry.clone();
-                move |headers: HeaderMap, path: Path<String>| protocols::tilejson(reg.clone(), headers, path)
+                move |headers: HeaderMap, path: Path<String>| {
+                    protocols::tilejson(reg.clone(), headers, path)
+                }
             }),
         );
 

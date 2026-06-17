@@ -1,12 +1,12 @@
 use axum::{
-    extract::{Path, Query},
-    http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::{Path, Query},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use quick_xml::{
-    events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
     Writer,
+    events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -95,14 +95,12 @@ fn base_url(headers: &HeaderMap) -> String {
 fn ows_exception_xml(code: &str, text: &str) -> Response {
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     let _ = writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)));
-    let root = BytesStart::new("ServiceExceptionReport")
-        .with_attributes(vec![
-            ("version", "1.3.0"),
-            ("xmlns", "http://www.opengis.net/ogc"),
-        ]);
+    let root = BytesStart::new("ServiceExceptionReport").with_attributes(vec![
+        ("version", "1.3.0"),
+        ("xmlns", "http://www.opengis.net/ogc"),
+    ]);
     let _ = writer.write_event(Event::Start(root));
-    let se = BytesStart::new("ServiceException")
-        .with_attributes(vec![("code", code)]);
+    let se = BytesStart::new("ServiceException").with_attributes(vec![("code", code)]);
     let _ = writer.write_event(Event::Start(se));
     let _ = writer.write_event(Event::Text(BytesText::new(text)));
     let _ = writer.write_event(Event::End(BytesEnd::new("ServiceException")));
@@ -116,9 +114,16 @@ fn ows_exception_xml(code: &str, text: &str) -> Response {
         .into_response()
 }
 
-fn file_info(registry: &DataSourceRegistry, filename: &str) -> Result<(String, crate::tile::TileInfo), Response> {
+fn file_info(
+    registry: &DataSourceRegistry,
+    filename: &str,
+) -> Result<(String, crate::tile::TileInfo), Response> {
     let source = registry.get(filename).ok_or_else(|| {
-        (StatusCode::NOT_FOUND, format!("Layer not found: {}", filename)).into_response()
+        (
+            StatusCode::NOT_FOUND,
+            format!("Layer not found: {}", filename),
+        )
+            .into_response()
     })?;
     let info = source.info();
     Ok((info.data_type.as_str().to_string(), info.tile_info))
@@ -131,7 +136,12 @@ fn extent_epsg3857(info: &crate::tile::TileInfo) -> [f64; 4] {
         crate::tile::R * (std::f64::consts::FRAC_PI_4 + lat_rad / 2.0).tan().ln()
     };
     let merc_x = |lng: f64| lng * crate::tile::C / 180.0;
-    let (min_lng, min_lat, max_lng, max_lat) = (info.extent[0], info.extent[1], info.extent[2], info.extent[3]);
+    let (min_lng, min_lat, max_lng, max_lat) = (
+        info.extent[0],
+        info.extent[1],
+        info.extent[2],
+        info.extent[3],
+    );
     [
         merc_x(min_lng),
         merc_y(min_lat),
@@ -164,7 +174,10 @@ pub(crate) async fn wms_handler(
     match req.to_uppercase().as_str() {
         "GETCAPABILITIES" => wms_capabilities_xml(&registry, &headers),
         "GETMAP" => wms_get_map(&registry, &headers, &params),
-        _ => ows_exception_xml("OperationNotSupported", &format!("Unknown request: {}", req)),
+        _ => ows_exception_xml(
+            "OperationNotSupported",
+            &format!("Unknown request: {}", req),
+        ),
     }
 }
 
@@ -175,13 +188,25 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
 
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     macro_rules! start {
-        ($name:expr) => { writer.write_event(Event::Start(BytesStart::new($name))).unwrap() };
+        ($name:expr) => {
+            writer
+                .write_event(Event::Start(BytesStart::new($name)))
+                .unwrap()
+        };
     }
     macro_rules! end {
-        ($name:expr) => { writer.write_event(Event::End(BytesEnd::new($name))).unwrap() };
+        ($name:expr) => {
+            writer
+                .write_event(Event::End(BytesEnd::new($name)))
+                .unwrap()
+        };
     }
     macro_rules! text {
-        ($text:expr) => { writer.write_event(Event::Text(BytesText::new($text))).unwrap() };
+        ($text:expr) => {
+            writer
+                .write_event(Event::Text(BytesText::new($text)))
+                .unwrap()
+        };
     }
     macro_rules! leaf {
         ($name:expr, $value:expr) => {
@@ -191,25 +216,30 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
         };
     }
 
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
+    writer
+        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .unwrap();
 
-    let wms_caps = BytesStart::new("WMS_Capabilities")
-        .with_attributes(vec![
-            ("version", "1.3.0"),
-            ("xmlns", "http://www.opengis.net/wms"),
-            ("xmlns:sld", "http://www.opengis.net/sld"),
-            ("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"),
-            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-        ]);
+    let wms_caps = BytesStart::new("WMS_Capabilities").with_attributes(vec![
+        ("version", "1.3.0"),
+        ("xmlns", "http://www.opengis.net/wms"),
+        ("xmlns:sld", "http://www.opengis.net/sld"),
+        ("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"),
+        ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
+    ]);
     writer.write_event(Event::Start(wms_caps)).unwrap();
 
     start!("Service");
     leaf!("Name", "WMS");
     leaf!("Title", "SimpleGeoServer WMS");
-    write_empty(&mut writer, "OnlineResource", &[
-        ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-        ("xlink:href", &wms_url),
-    ]);
+    write_empty(
+        &mut writer,
+        "OnlineResource",
+        &[
+            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
+            ("xlink:href", &wms_url),
+        ],
+    );
     end!("Service");
 
     start!("Capability");
@@ -219,10 +249,14 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     start!("DCPType");
     start!("HTTP");
     start!("Get");
-    write_empty(&mut writer, "OnlineResource", &[
-        ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-        ("xlink:href", &wms_url),
-    ]);
+    write_empty(
+        &mut writer,
+        "OnlineResource",
+        &[
+            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
+            ("xlink:href", &wms_url),
+        ],
+    );
     end!("Get");
     end!("HTTP");
     end!("DCPType");
@@ -233,20 +267,28 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     start!("DCPType");
     start!("HTTP");
     start!("Get");
-    write_empty(&mut writer, "OnlineResource", &[
-        ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-        ("xlink:href", &wms_url),
-    ]);
+    write_empty(
+        &mut writer,
+        "OnlineResource",
+        &[
+            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
+            ("xlink:href", &wms_url),
+        ],
+    );
     end!("Get");
     end!("HTTP");
     end!("DCPType");
     start!("DCPType");
     start!("HTTP");
     start!("Post");
-    write_empty(&mut writer, "OnlineResource", &[
-        ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-        ("xlink:href", &wms_url),
-    ]);
+    write_empty(
+        &mut writer,
+        "OnlineResource",
+        &[
+            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
+            ("xlink:href", &wms_url),
+        ],
+    );
     end!("Post");
     end!("HTTP");
     end!("DCPType");
@@ -268,12 +310,22 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     let mut min_lat = f64::INFINITY;
     let mut max_lat = f64::NEG_INFINITY;
     for source in &sources {
-        if source.data_type != crate::data_source::DataType::Raster { continue; }
+        if source.data_type != crate::data_source::DataType::Raster {
+            continue;
+        }
         let e = source.tile_info.extent;
-        if e[0] < min_lng { min_lng = e[0]; }
-        if e[2] > max_lng { max_lng = e[2]; }
-        if e[1] < min_lat { min_lat = e[1]; }
-        if e[3] > max_lat { max_lat = e[3]; }
+        if e[0] < min_lng {
+            min_lng = e[0];
+        }
+        if e[2] > max_lng {
+            max_lng = e[2];
+        }
+        if e[1] < min_lat {
+            min_lat = e[1];
+        }
+        if e[3] > max_lat {
+            max_lat = e[3];
+        }
     }
     if min_lng.is_finite() {
         start!("EX_GeographicBoundingBox");
@@ -285,7 +337,9 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     }
 
     for source in &sources {
-        if source.data_type != crate::data_source::DataType::Raster { continue; }
+        if source.data_type != crate::data_source::DataType::Raster {
+            continue;
+        }
         let info = &source.tile_info;
         let e = info.extent;
         let em = extent_epsg3857(info);
@@ -304,13 +358,17 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
         leaf!("southBoundLatitude", &format!("{:.10}", e[1]));
         leaf!("northBoundLatitude", &format!("{:.10}", e[3]));
         end!("EX_GeographicBoundingBox");
-        write_empty(&mut writer, "BoundingBox", &[
-            ("CRS", "EPSG:3857"),
-            ("minx", &em0s),
-            ("miny", &em1s),
-            ("maxx", &em2s),
-            ("maxy", &em3s),
-        ]);
+        write_empty(
+            &mut writer,
+            "BoundingBox",
+            &[
+                ("CRS", "EPSG:3857"),
+                ("minx", &em0s),
+                ("miny", &em1s),
+                ("maxx", &em2s),
+                ("maxy", &em3s),
+            ],
+        );
         leaf!("MinScaleDenominator", "0.0");
         leaf!("MaxScaleDenominator", "1e12");
         end!("Layer");
@@ -321,7 +379,10 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
 
     let xml = writer.into_inner();
     (
-        [(header::CONTENT_TYPE, "application/vnd.ogc.wms_xml; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "application/vnd.ogc.wms_xml; charset=utf-8",
+        )],
         xml,
     )
         .into_response()
@@ -336,7 +397,12 @@ fn wms_get_map(registry: &DataSourceRegistry, _headers: &HeaderMap, params: &Wms
     let layer_name = layers.split(',').next().unwrap_or(layers);
     let source = match registry.get(layer_name) {
         Some(s) => s,
-        None => return ows_exception_xml("LayerNotDefined", &format!("Layer '{}' not found", layer_name)),
+        None => {
+            return ows_exception_xml(
+                "LayerNotDefined",
+                &format!("Layer '{}' not found", layer_name),
+            );
+        }
     };
 
     if source.info().data_type == crate::data_source::DataType::Vector {
@@ -344,16 +410,15 @@ fn wms_get_map(registry: &DataSourceRegistry, _headers: &HeaderMap, params: &Wms
             Ok(d) => d,
             Err(e) => return ows_exception_xml("InternalError", &e.1),
         };
-        return (
-            [(header::CONTENT_TYPE, "application/geo+json")],
-            geojson,
-        )
-            .into_response();
+        return ([(header::CONTENT_TYPE, "application/geo+json")], geojson).into_response();
     }
 
     let crs = params.crs.as_deref().unwrap_or("EPSG:3857");
     if crs.to_uppercase() != "EPSG:3857" && crs.to_uppercase() != "EPSG:900913" {
-        return ows_exception_xml("InvalidCRS", &format!("Unsupported CRS: {} (only EPSG:3857 is supported)", crs));
+        return ows_exception_xml(
+            "InvalidCRS",
+            &format!("Unsupported CRS: {} (only EPSG:3857 is supported)", crs),
+        );
     }
 
     let bbox_str_parsed = params.bbox.as_deref().unwrap_or("");
@@ -362,14 +427,20 @@ fn wms_get_map(registry: &DataSourceRegistry, _headers: &HeaderMap, params: &Wms
         .filter_map(|s| s.trim().parse::<f64>().ok())
         .collect();
     if bbox_parts.len() != 4 {
-        return ows_exception_xml("MissingParameterValue", "BBOX is required and must be minx,miny,maxx,maxy");
+        return ows_exception_xml(
+            "MissingParameterValue",
+            "BBOX is required and must be minx,miny,maxx,maxy",
+        );
     }
     let bbox = [bbox_parts[0], bbox_parts[1], bbox_parts[2], bbox_parts[3]];
 
     let width = params.width.unwrap_or(256);
     let height = params.height.unwrap_or(256);
     if width == 0 || height == 0 || width > 4096 || height > 4096 {
-        return ows_exception_xml("InvalidParameterValue", "WIDTH and HEIGHT must be between 1 and 4096");
+        return ows_exception_xml(
+            "InvalidParameterValue",
+            "WIDTH and HEIGHT must be between 1 and 4096",
+        );
     }
 
     let transparent = params
@@ -390,11 +461,7 @@ fn wms_get_map(registry: &DataSourceRegistry, _headers: &HeaderMap, params: &Wms
         Err(e) => return ows_exception_xml("InternalError", &e.1),
     };
 
-    (
-        [(header::CONTENT_TYPE, "image/png")],
-        png_data,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "image/png")], png_data).into_response()
 }
 
 // ─── WMTS ───
@@ -409,29 +476,40 @@ pub(crate) async fn wmts_capabilities(
 
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     macro_rules! start {
-        ($name:expr) => { writer.write_event(Event::Start(BytesStart::new($name))).unwrap() };
+        ($name:expr) => {
+            writer
+                .write_event(Event::Start(BytesStart::new($name)))
+                .unwrap()
+        };
     }
     macro_rules! end {
-        ($name:expr) => { writer.write_event(Event::End(BytesEnd::new($name))).unwrap() };
+        ($name:expr) => {
+            writer
+                .write_event(Event::End(BytesEnd::new($name)))
+                .unwrap()
+        };
     }
     macro_rules! leaf {
         ($name:expr, $value:expr) => {
             start!($name);
-            writer.write_event(Event::Text(BytesText::new($value))).unwrap();
+            writer
+                .write_event(Event::Text(BytesText::new($value)))
+                .unwrap();
             end!($name);
         };
     }
 
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
+    writer
+        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .unwrap();
 
-    let caps = BytesStart::new("Capabilities")
-        .with_attributes(vec![
-            ("xmlns", "http://www.opengis.net/wmts/1.0"),
-            ("xmlns:ows", "http://www.opengis.net/ows/1.1"),
-            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-            ("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"),
-            ("version", "1.0.0"),
-        ]);
+    let caps = BytesStart::new("Capabilities").with_attributes(vec![
+        ("xmlns", "http://www.opengis.net/wmts/1.0"),
+        ("xmlns:ows", "http://www.opengis.net/ows/1.1"),
+        ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
+        ("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"),
+        ("version", "1.0.0"),
+    ]);
     writer.write_event(Event::Start(caps)).unwrap();
 
     start!("ows:ServiceIdentification");
@@ -447,7 +525,9 @@ pub(crate) async fn wmts_capabilities(
     start!("Contents");
 
     for source in &sources {
-        if source.data_type != crate::data_source::DataType::Raster { continue; }
+        if source.data_type != crate::data_source::DataType::Raster {
+            continue;
+        }
         let em = extent_epsg3857(&source.tile_info);
         let em0s = format!("{:.5}", em[0]);
         let em1s = format!("{:.5}", em[1]);
@@ -457,13 +537,17 @@ pub(crate) async fn wmts_capabilities(
         start!("Layer");
         leaf!("ows:Title", &source.name);
         leaf!("ows:Identifier", &source.name);
-        write_empty(&mut writer, "ows:BoundingBox", &[
-            ("CRS", "EPSG:3857"),
-            ("minx", &em0s),
-            ("miny", &em1s),
-            ("maxx", &em2s),
-            ("maxy", &em3s),
-        ]);
+        write_empty(
+            &mut writer,
+            "ows:BoundingBox",
+            &[
+                ("CRS", "EPSG:3857"),
+                ("minx", &em0s),
+                ("miny", &em1s),
+                ("maxx", &em2s),
+                ("maxy", &em3s),
+            ],
+        );
 
         start!("Style");
         leaf!("ows:Identifier", "default");
@@ -476,12 +560,19 @@ pub(crate) async fn wmts_capabilities(
         leaf!("TileMatrixSet", "GoogleMapsCompatible");
         end!("TileMatrixSetLink");
 
-        let tmpl = format!("{}/{{layer}}/default/GoogleMapsCompatible/{{TileMatrix}}/{{TileCol}}/{{TileRow}}.png", wmts_url);
-        write_empty(&mut writer, "ResourceURL", &[
-            ("format", "image/png"),
-            ("resourceType", "tile"),
-            ("template", &tmpl),
-        ]);
+        let tmpl = format!(
+            "{}/{{layer}}/default/GoogleMapsCompatible/{{TileMatrix}}/{{TileCol}}/{{TileRow}}.png",
+            wmts_url
+        );
+        write_empty(
+            &mut writer,
+            "ResourceURL",
+            &[
+                ("format", "image/png"),
+                ("resourceType", "tile"),
+                ("template", &tmpl),
+            ],
+        );
 
         end!("Layer");
     }
@@ -545,37 +636,43 @@ pub(crate) async fn wmts_get_tile(
 
 // ─── TMS ───
 
-pub(crate) async fn tms_root(
-    registry: Arc<DataSourceRegistry>,
-    headers: HeaderMap,
-) -> Response {
+pub(crate) async fn tms_root(registry: Arc<DataSourceRegistry>, headers: HeaderMap) -> Response {
     let base = base_url(&headers);
     let tms_url = format!("{}/ogc/tms/1.0.0", base);
     let sources = registry.list();
 
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
 
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
+    writer
+        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .unwrap();
 
-    let root_elem = BytesStart::new("TileMaps")
-        .with_attributes(vec![
-            ("version", "1.0.0"),
-            ("xmlns", "http://tms.osgeo.org/1.0.0"),
-        ]);
+    let root_elem = BytesStart::new("TileMaps").with_attributes(vec![
+        ("version", "1.0.0"),
+        ("xmlns", "http://tms.osgeo.org/1.0.0"),
+    ]);
     writer.write_event(Event::Start(root_elem)).unwrap();
 
     for source in &sources {
-        if source.data_type != crate::data_source::DataType::Raster { continue; }
+        if source.data_type != crate::data_source::DataType::Raster {
+            continue;
+        }
         let layer_url = format!("{}/{}", tms_url, source.name);
-        write_empty(&mut writer, "TileMap", &[
-            ("title", &source.name),
-            ("srs", "EPSG:3857"),
-            ("profile", "global-geodetic"),
-            ("href", &layer_url),
-        ]);
+        write_empty(
+            &mut writer,
+            "TileMap",
+            &[
+                ("title", &source.name),
+                ("srs", "EPSG:3857"),
+                ("profile", "global-geodetic"),
+                ("href", &layer_url),
+            ],
+        );
     }
 
-    writer.write_event(Event::End(BytesEnd::new("TileMaps"))).unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("TileMaps")))
+        .unwrap();
     let xml = writer.into_inner();
 
     (
@@ -601,7 +698,11 @@ pub(crate) async fn tms_layer(
     let info = source.info();
 
     if info.data_type != crate::data_source::DataType::Raster {
-        return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "TMS only supports raster layers").into_response();
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "TMS only supports raster layers",
+        )
+            .into_response();
     }
 
     let em = extent_epsg3857(&info.tile_info);
@@ -612,51 +713,67 @@ pub(crate) async fn tms_layer(
 
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     macro_rules! start {
-        ($name:expr) => { writer.write_event(Event::Start(BytesStart::new($name))).unwrap() };
+        ($name:expr) => {
+            writer
+                .write_event(Event::Start(BytesStart::new($name)))
+                .unwrap()
+        };
     }
     macro_rules! end {
-        ($name:expr) => { writer.write_event(Event::End(BytesEnd::new($name))).unwrap() };
+        ($name:expr) => {
+            writer
+                .write_event(Event::End(BytesEnd::new($name)))
+                .unwrap()
+        };
     }
     macro_rules! leaf {
         ($name:expr, $value:expr) => {
             start!($name);
-            writer.write_event(Event::Text(BytesText::new($value))).unwrap();
+            writer
+                .write_event(Event::Text(BytesText::new($value)))
+                .unwrap();
             end!($name);
         };
     }
 
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
+    writer
+        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .unwrap();
 
-    let tm = BytesStart::new("TileMap")
-        .with_attributes(vec![
-            ("version", "1.0.0"),
-            ("xmlns", "http://tms.osgeo.org/1.0.0"),
-        ]);
+    let tm = BytesStart::new("TileMap").with_attributes(vec![
+        ("version", "1.0.0"),
+        ("xmlns", "http://tms.osgeo.org/1.0.0"),
+    ]);
     writer.write_event(Event::Start(tm)).unwrap();
     leaf!("Title", &layer);
     leaf!("Abstract", &format!("TMS layer for {}", layer));
     leaf!("SRS", "EPSG:3857");
 
-    write_empty(&mut writer, "BoundingBox", &[
-        ("minx", &em0s),
-        ("miny", &em1s),
-        ("maxx", &em2s),
-        ("maxy", &em3s),
-    ]);
+    write_empty(
+        &mut writer,
+        "BoundingBox",
+        &[
+            ("minx", &em0s),
+            ("miny", &em1s),
+            ("maxx", &em2s),
+            ("maxy", &em3s),
+        ],
+    );
 
     let ox = (-crate::tile::C).to_string();
     let oy = (-crate::tile::C).to_string();
-    write_empty(&mut writer, "Origin", &[
-        ("x", &ox),
-        ("y", &oy),
-    ]);
+    write_empty(&mut writer, "Origin", &[("x", &ox), ("y", &oy)]);
 
-    write_empty(&mut writer, "TileFormat", &[
-        ("width", "256"),
-        ("height", "256"),
-        ("mime-type", "image/png"),
-        ("extension", "png"),
-    ]);
+    write_empty(
+        &mut writer,
+        "TileFormat",
+        &[
+            ("width", "256"),
+            ("height", "256"),
+            ("mime-type", "image/png"),
+            ("extension", "png"),
+        ],
+    );
 
     start!("TileSets");
     let max_zoom = info.tile_info.max_zoom.min(22);
@@ -666,11 +783,15 @@ pub(crate) async fn tms_layer(
         let href = format!("{}/{}", layer_url, z);
         let res_str = format!("{:.10}", res);
         let order_str = z.to_string();
-        write_empty(&mut writer, "TileSet", &[
-            ("href", &href),
-            ("units-per-pixel", &res_str),
-            ("order", &order_str),
-        ]);
+        write_empty(
+            &mut writer,
+            "TileSet",
+            &[
+                ("href", &href),
+                ("units-per-pixel", &res_str),
+                ("order", &order_str),
+            ],
+        );
     }
     end!("TileSets");
     end!("TileMap");
@@ -733,7 +854,11 @@ pub(crate) async fn tilejson(
     };
 
     let fmt = if dtype == "raster" { "png" } else { "geojson" };
-    let tile_type = if dtype == "raster" { "raster" } else { "vector" };
+    let tile_type = if dtype == "raster" {
+        "raster"
+    } else {
+        "vector"
+    };
 
     let e = info.extent;
     let center_lng = (e[0] + e[2]) / 2.0;

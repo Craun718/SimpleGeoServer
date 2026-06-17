@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use geo::{Coord, Geometry, MapCoords};
 use geodesy::prelude::*;
 use std::sync::LazyLock;
+use tiff::TiffResult;
 use tiff::decoder::Decoder;
 use tiff::tags::Tag;
-use tiff::TiffResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnownCrs {
@@ -94,13 +94,21 @@ fn wgs84_to_crs(lng_deg: f64, lat_deg: f64, epsg: u16) -> Option<(f64, f64)> {
     }
     if epsg == 3857 {
         let mut coords = [Coor2D::raw(lng_deg.to_radians(), lat_deg.to_radians())];
-        GEODESY.lock().unwrap().apply("webmerc", Fwd, &mut coords).ok()?;
+        GEODESY
+            .lock()
+            .unwrap()
+            .apply("webmerc", Fwd, &mut coords)
+            .ok()?;
         return Some(coords[0].xy());
     }
     let def = crs_definitions::from_code(epsg)?;
     let op_str = geodesy::authoring::parse_proj(def.proj4).ok()?;
     let mut coords = [Coor2D::raw(lng_deg.to_radians(), lat_deg.to_radians())];
-    GEODESY.lock().unwrap().apply(&op_str, Fwd, &mut coords).ok()?;
+    GEODESY
+        .lock()
+        .unwrap()
+        .apply(&op_str, Fwd, &mut coords)
+        .ok()?;
     Some(coords[0].xy())
 }
 
@@ -110,14 +118,22 @@ fn crs_to_wgs84(x: f64, y: f64, epsg: u16) -> Option<(f64, f64)> {
     }
     if epsg == 3857 {
         let mut coords = [Coor2D::raw(x, y)];
-        GEODESY.lock().unwrap().apply("webmerc", Inv, &mut coords).ok()?;
+        GEODESY
+            .lock()
+            .unwrap()
+            .apply("webmerc", Inv, &mut coords)
+            .ok()?;
         let (lng_rad, lat_rad) = coords[0].xy();
         return Some((lng_rad.to_degrees(), lat_rad.to_degrees()));
     }
     let def = crs_definitions::from_code(epsg)?;
     let op_str = geodesy::authoring::parse_proj(def.proj4).ok()?;
     let mut coords = [Coor2D::raw(x, y)];
-    GEODESY.lock().unwrap().apply(&op_str, Inv, &mut coords).ok()?;
+    GEODESY
+        .lock()
+        .unwrap()
+        .apply(&op_str, Inv, &mut coords)
+        .ok()?;
     let (lng_rad, lat_rad) = coords[0].xy();
     Some((lng_rad.to_degrees(), lat_rad.to_degrees()))
 }
@@ -155,7 +171,9 @@ pub fn read_geo_key_info<R: Read + Seek>(decoder: &mut Decoder<R>) -> TiffResult
             1024 if tiff_tag_loc == 0 && count == 1 => info.model_type = Some(value_or_offset),
             2048 if tiff_tag_loc == 0 && count == 1 => info.geographic_type = Some(value_or_offset),
             3072 if tiff_tag_loc == 0 && count == 1 => info.projected_type = Some(value_or_offset),
-            3075 if tiff_tag_loc == 0 && count == 1 => info.proj_coord_trans = Some(value_or_offset),
+            3075 if tiff_tag_loc == 0 && count == 1 => {
+                info.proj_coord_trans = Some(value_or_offset)
+            }
             3080 | 3081 | 3082 | 3083 | 3092 => {
                 let val = if tiff_tag_loc == 0 && count == 1 {
                     Some(value_or_offset as f64)
@@ -190,30 +208,43 @@ pub fn read_geo_key_info<R: Read + Seek>(decoder: &mut Decoder<R>) -> TiffResult
 
 pub fn parse_known_crs(name: &str) -> Option<KnownCrs> {
     let upper = name.to_uppercase();
-    let compact: String = upper.chars().filter(|ch| !matches!(ch, ' ' | '_' | '-')).collect();
+    let compact: String = upper
+        .chars()
+        .filter(|ch| !matches!(ch, ' ' | '_' | '-'))
+        .collect();
     let is_wgs84_family = compact.contains("WGS84") || compact.contains("WGS1984");
 
-    if compact.contains("EPSG:3857") || compact.contains("EPSG3857")
-        || compact.contains("WEBMERCATOR") || compact.contains("PSEUDOMERCATOR")
+    if compact.contains("EPSG:3857")
+        || compact.contains("EPSG3857")
+        || compact.contains("WEBMERCATOR")
+        || compact.contains("PSEUDOMERCATOR")
         || compact.contains("AUXILIARYSPHERE")
     {
         return Some(KnownCrs::WebMercator);
     }
 
     if let Some((zone, northern)) = parse_utm_zone(&compact) {
-        let epsg: u16 = if northern { 32600 + zone as u16 } else { 32700 + zone as u16 };
+        let epsg: u16 = if northern {
+            32600 + zone as u16
+        } else {
+            32700 + zone as u16
+        };
         return Some(KnownCrs::Epsg(epsg));
     }
 
-    if compact.contains("EPSG:4326") || compact.contains("EPSG4326")
-        || compact.contains("CRS84") || compact.contains("OGC:CRS84")
+    if compact.contains("EPSG:4326")
+        || compact.contains("EPSG4326")
+        || compact.contains("CRS84")
+        || compact.contains("OGC:CRS84")
         || is_wgs84_family
     {
         return Some(KnownCrs::Wgs84);
     }
 
     if compact.starts_with("EPSG:") || compact.starts_with("EPSG") {
-        let num_part = compact.trim_start_matches("EPSG:").trim_start_matches("EPSG");
+        let num_part = compact
+            .trim_start_matches("EPSG:")
+            .trim_start_matches("EPSG");
         if let Ok(code) = num_part.parse::<u16>() {
             if crs_definitions::from_code(code).is_some() {
                 return Some(KnownCrs::Epsg(code));
@@ -227,18 +258,38 @@ pub fn parse_known_crs(name: &str) -> Option<KnownCrs> {
 fn parse_utm_zone(compact: &str) -> Option<(u8, bool)> {
     let chars: Vec<char> = compact.chars().collect();
     for start in 0..chars.len() {
-        if !compact[start..].starts_with("UTM") { continue; }
+        if !compact[start..].starts_with("UTM") {
+            continue;
+        }
         let mut idx = start + 3;
         let scan_limit = (start + 20).min(chars.len());
-        while idx < scan_limit && !chars[idx].is_ascii_digit() { idx += 1; }
-        if idx >= scan_limit { continue; }
+        while idx < scan_limit && !chars[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if idx >= scan_limit {
+            continue;
+        }
         let digit_start = idx;
-        while idx < scan_limit && chars[idx].is_ascii_digit() { idx += 1; }
-        if digit_start == idx { continue; }
-        let zone: u8 = chars[digit_start..idx].iter().collect::<String>().parse().ok()?;
-        if !(1..=60).contains(&zone) { continue; }
-        while idx < scan_limit && chars[idx] != 'N' && chars[idx] != 'S' { idx += 1; }
-        if idx < scan_limit { return Some((zone, chars[idx] == 'N')); }
+        while idx < scan_limit && chars[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if digit_start == idx {
+            continue;
+        }
+        let zone: u8 = chars[digit_start..idx]
+            .iter()
+            .collect::<String>()
+            .parse()
+            .ok()?;
+        if !(1..=60).contains(&zone) {
+            continue;
+        }
+        while idx < scan_limit && chars[idx] != 'N' && chars[idx] != 'S' {
+            idx += 1;
+        }
+        if idx < scan_limit {
+            return Some((zone, chars[idx] == 'N'));
+        }
     }
     None
 }
@@ -253,12 +304,17 @@ pub fn known_crs_coord_to_wgs84(x: f64, y: f64, crs: KnownCrs) -> Option<(f64, f
     }
 }
 
-pub fn known_crs_geometry_to_wgs84(geometry: &Geometry<f64>, crs: KnownCrs) -> Option<Geometry<f64>> {
-    geometry.try_map_coords(|Coord { x, y }| {
-        known_crs_coord_to_wgs84(x, y, crs)
-            .map(|(lng, lat)| Coord { x: lng, y: lat })
-            .ok_or(())
-    }).ok()
+pub fn known_crs_geometry_to_wgs84(
+    geometry: &Geometry<f64>,
+    crs: KnownCrs,
+) -> Option<Geometry<f64>> {
+    geometry
+        .try_map_coords(|Coord { x, y }| {
+            known_crs_coord_to_wgs84(x, y, crs)
+                .map(|(lng, lat)| Coord { x: lng, y: lat })
+                .ok_or(())
+        })
+        .ok()
 }
 
 pub fn wgs84_to_native_crs(lng: f64, lat: f64, geo_key: &GeoKeyInfo) -> Option<(f64, f64)> {
@@ -272,7 +328,11 @@ pub fn wgs84_to_native_crs(lng: f64, lat: f64, geo_key: &GeoKeyInfo) -> Option<(
         let proj4 = proj4_from_tm_params(geo_key)?;
         let op_str = geodesy::authoring::parse_proj(&proj4).ok()?;
         let mut coords = [Coor2D::raw(lng.to_radians(), lat.to_radians())];
-        GEODESY.lock().unwrap().apply(&op_str, Fwd, &mut coords).ok()?;
+        GEODESY
+            .lock()
+            .unwrap()
+            .apply(&op_str, Fwd, &mut coords)
+            .ok()?;
         return Some(coords[0].xy());
     }
     None
@@ -292,7 +352,12 @@ pub fn known_crs_corners_to_wgs84(corners: &[(f64, f64); 4], crs: KnownCrs) -> O
     }
 }
 
-pub fn extent_to_wgs84(geo_transform: &[f64; 6], width: u32, height: u32, geo_key: &GeoKeyInfo) -> Option<[f64; 4]> {
+pub fn extent_to_wgs84(
+    geo_transform: &[f64; 6],
+    width: u32,
+    height: u32,
+    geo_key: &GeoKeyInfo,
+) -> Option<[f64; 4]> {
     let corners = model_corners(geo_transform, width, height);
 
     if geo_key.model_type == Some(2) {
@@ -305,7 +370,12 @@ pub fn extent_to_wgs84(geo_transform: &[f64; 6], width: u32, height: u32, geo_ke
             wgs_corners.push(crs_to_wgs84(x, y, epsg)?);
         }
         if wgs_corners.len() == 4 {
-            return Some(sort_extent(&[wgs_corners[0], wgs_corners[1], wgs_corners[2], wgs_corners[3]]));
+            return Some(sort_extent(&[
+                wgs_corners[0],
+                wgs_corners[1],
+                wgs_corners[2],
+                wgs_corners[3],
+            ]));
         }
     }
 
@@ -321,7 +391,12 @@ pub fn extent_to_wgs84(geo_transform: &[f64; 6], width: u32, height: u32, geo_ke
                     wgs_corners.push((lng_rad.to_degrees(), lat_rad.to_degrees()));
                 }
                 if wgs_corners.len() == 4 {
-                    return Some(sort_extent(&[wgs_corners[0], wgs_corners[1], wgs_corners[2], wgs_corners[3]]));
+                    return Some(sort_extent(&[
+                        wgs_corners[0],
+                        wgs_corners[1],
+                        wgs_corners[2],
+                        wgs_corners[3],
+                    ]));
                 }
             }
         }
@@ -336,7 +411,12 @@ pub fn extent_to_wgs84(geo_transform: &[f64; 6], width: u32, height: u32, geo_ke
             wgs_corners.push(crs_to_wgs84(x, y, 3857)?);
         }
         if wgs_corners.len() == 4 {
-            return Some(sort_extent(&[wgs_corners[0], wgs_corners[1], wgs_corners[2], wgs_corners[3]]));
+            return Some(sort_extent(&[
+                wgs_corners[0],
+                wgs_corners[1],
+                wgs_corners[2],
+                wgs_corners[3],
+            ]));
         }
     }
 
@@ -389,9 +469,13 @@ fn sort_extent(corners: &[(f64, f64); 4]) -> [f64; 4] {
 
 fn is_web_mercator_range(corners: &[(f64, f64); 4]) -> bool {
     const WM_BOUND: f64 = 20037508.34;
-    corners.iter().all(|&(x, y)| x.abs() <= WM_BOUND && y.abs() <= WM_BOUND && x.abs() > 180.0)
+    corners
+        .iter()
+        .all(|&(x, y)| x.abs() <= WM_BOUND && y.abs() <= WM_BOUND && x.abs() > 180.0)
 }
 
 fn geographic_range(corners: &[(f64, f64); 4]) -> bool {
-    corners.iter().all(|&(x, y)| x.abs() <= 180.0 && y.abs() <= 90.0)
+    corners
+        .iter()
+        .all(|&(x, y)| x.abs() <= 180.0 && y.abs() <= 90.0)
 }
