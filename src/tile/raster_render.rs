@@ -263,16 +263,31 @@ pub fn render_raster_tile_ex(
                         }
                     }
                     ResamplingMode::Bilinear => crate::resample::sample_bilinear(
-                        &region_data, local_col, local_row,
-                        read_w_u, read_h as usize, raster.bands, band,
+                        &region_data,
+                        local_col,
+                        local_row,
+                        read_w_u,
+                        read_h as usize,
+                        raster.bands,
+                        band,
                     ),
                     ResamplingMode::Bicubic => crate::resample::sample_bicubic(
-                        &region_data, local_col, local_row,
-                        read_w_u, read_h as usize, raster.bands, band,
+                        &region_data,
+                        local_col,
+                        local_row,
+                        read_w_u,
+                        read_h as usize,
+                        raster.bands,
+                        band,
                     ),
                     ResamplingMode::Lanczos3 => crate::resample::sample_lanczos3(
-                        &region_data, local_col, local_row,
-                        read_w_u, read_h as usize, raster.bands, band,
+                        &region_data,
+                        local_col,
+                        local_row,
+                        read_w_u,
+                        read_h as usize,
+                        raster.bands,
+                        band,
                     ),
                 }
             };
@@ -569,11 +584,7 @@ pub fn render_map_bbox(
             let col_i = col.round() as i64;
             let row_i = row.round() as i64;
 
-            if col_i >= 0
-                && col_i < ov_width as i64
-                && row_i >= 0
-                && row_i < ov_height as i64
-            {
+            if col_i >= 0 && col_i < ov_width as i64 && row_i >= 0 && row_i < ov_height as i64 {
                 let local_col_f = col_i as f64 - col_off_f;
                 let local_row_f = row_i as f64 - row_off_f;
                 let ds_col = (local_col_f / step_f) as usize;
@@ -693,12 +704,28 @@ pub fn render_single_tile(
     format: &str,
 ) -> Result<(Vec<u8>, u32, String), String> {
     let (data, rendered) = match format {
-        "raw-rgba" => {
-            render_raster_tile_ex(raster, z, x, y, size, bands, Some(resampling), stretch, true)?
-        }
-        "png" | _ => {
-            render_raster_tile_ex(raster, z, x, y, size, bands, Some(resampling), stretch, false)?
-        }
+        "raw-rgba" => render_raster_tile_ex(
+            raster,
+            z,
+            x,
+            y,
+            size,
+            bands,
+            Some(resampling),
+            stretch,
+            true,
+        )?,
+        "png" | _ => render_raster_tile_ex(
+            raster,
+            z,
+            x,
+            y,
+            size,
+            bands,
+            Some(resampling),
+            stretch,
+            false,
+        )?,
     };
     Ok((data, rendered, format.to_string()))
 }
@@ -839,7 +866,11 @@ pub(crate) fn render_raster_tile_cpu_rgba(
                     ResamplingMode::NearestNeighbor => {
                         let ds_col = buf_col.round() as i64;
                         let ds_row = buf_row.round() as i64;
-                        if ds_col >= 0 && ds_col < read_w_u as i64 && ds_row >= 0 && ds_row < read_h_u as i64 {
+                        if ds_col >= 0
+                            && ds_col < read_w_u as i64
+                            && ds_row >= 0
+                            && ds_row < read_h_u as i64
+                        {
                             let idx = (ds_row as usize * read_w_u + ds_col as usize) * raster.bands;
                             if use_grayscale {
                                 let bi = 0usize;
@@ -850,7 +881,8 @@ pub(crate) fn render_raster_tile_cpu_rgba(
                                     } else {
                                         let (min_v, max_v) = stretch_bounds[bi];
                                         let stretched = if (max_v - min_v).abs() > f64::EPSILON {
-                                            ((val - min_v) / (max_v - min_v) * 255.0).clamp(0.0, 255.0)
+                                            ((val - min_v) / (max_v - min_v) * 255.0)
+                                                .clamp(0.0, 255.0)
                                         } else {
                                             0.0
                                         };
@@ -872,7 +904,8 @@ pub(crate) fn render_raster_tile_cpu_rgba(
                                         }
                                         let (min_v, max_v) = stretch_bounds[bi];
                                         let stretched = if (max_v - min_v).abs() > f64::EPSILON {
-                                            ((val - min_v) / (max_v - min_v) * 255.0).clamp(0.0, 255.0)
+                                            ((val - min_v) / (max_v - min_v) * 255.0)
+                                                .clamp(0.0, 255.0)
                                         } else {
                                             0.0
                                         };
@@ -888,7 +921,11 @@ pub(crate) fn render_raster_tile_cpu_rgba(
                         }
                     }
                     _ => {
-                        if buf_col >= 0.0 && buf_col < read_w_u as f64 && buf_row >= 0.0 && buf_row < read_h_u as f64 {
+                        if buf_col >= 0.0
+                            && buf_col < read_w_u as f64
+                            && buf_row >= 0.0
+                            && buf_row < read_h_u as f64
+                        {
                             let sample_fn: fn(&[f64], f64, f64, usize, usize, usize, usize) -> f64 =
                                 match resampling {
                                     ResamplingMode::Bilinear => crate::resample::sample_bilinear,
@@ -898,7 +935,15 @@ pub(crate) fn render_raster_tile_cpu_rgba(
                                 };
                             if use_grayscale {
                                 let bi = 0usize;
-                                let val = sample_fn(&region_data, buf_col, buf_row, read_w_u, read_h_u, raster.bands, bi);
+                                let val = sample_fn(
+                                    &region_data,
+                                    buf_col,
+                                    buf_row,
+                                    read_w_u,
+                                    read_h_u,
+                                    raster.bands,
+                                    bi,
+                                );
                                 if val.is_nan() || crate::raster::is_nodata(val, raster.no_data) {
                                     pixel_is_nodata = true;
                                 } else {
@@ -915,8 +960,17 @@ pub(crate) fn render_raster_tile_cpu_rgba(
                                 }
                             } else {
                                 for (out_idx, &bi) in band_indices.iter().enumerate().take(3) {
-                                    let val = sample_fn(&region_data, buf_col, buf_row, read_w_u, read_h_u, raster.bands, bi);
-                                    if val.is_nan() || crate::raster::is_nodata(val, raster.no_data) {
+                                    let val = sample_fn(
+                                        &region_data,
+                                        buf_col,
+                                        buf_row,
+                                        read_w_u,
+                                        read_h_u,
+                                        raster.bands,
+                                        bi,
+                                    );
+                                    if val.is_nan() || crate::raster::is_nodata(val, raster.no_data)
+                                    {
                                         pixel_is_nodata = true;
                                         break;
                                     }

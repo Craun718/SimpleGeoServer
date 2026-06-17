@@ -32,7 +32,11 @@ fn test_outside_tile_returns_transparent_png() {
         let zoom = 5;
         let (png_data, rendered) = tile::render_raster_tile(
             &tile::get_raster(&path).unwrap(),
-            zoom, 0, 0, 256, &[1, 2, 3],
+            zoom,
+            0,
+            0,
+            256,
+            &[1, 2, 3],
         )
         .unwrap_or_else(|e| panic!("{file}: render error: {e}"));
 
@@ -78,7 +82,11 @@ fn test_inside_tile_has_rendered_pixels() {
 
         let (png_data, rendered) = tile::render_raster_tile(
             &tile::get_raster(&path).unwrap(),
-            zoom, tx, ty, 256, &[1, 2, 3],
+            zoom,
+            tx,
+            ty,
+            256,
+            &[1, 2, 3],
         )
         .unwrap_or_else(|e| panic!("{file}: render error: {e}"));
 
@@ -113,7 +121,11 @@ fn test_adjacent_outside_tile_is_empty() {
     let north_y = ty.saturating_sub(1);
     let (_, rendered_north) = tile::render_raster_tile(
         &tile::get_raster(&path).unwrap(),
-        zoom, tx, north_y, 256, &[1, 2, 3],
+        zoom,
+        tx,
+        north_y,
+        256,
+        &[1, 2, 3],
     )
     .expect("adjacent north tile should not error");
 
@@ -121,7 +133,11 @@ fn test_adjacent_outside_tile_is_empty() {
     let east_x = tx.saturating_add(1);
     let (_, rendered_east) = tile::render_raster_tile(
         &tile::get_raster(&path).unwrap(),
-        zoom, east_x, ty, 256, &[1, 2, 3],
+        zoom,
+        east_x,
+        ty,
+        256,
+        &[1, 2, 3],
     )
     .expect("adjacent east tile should not error");
 

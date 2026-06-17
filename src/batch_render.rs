@@ -24,7 +24,10 @@ pub struct BatchTileResult {
     pub rendered: u32,
 }
 
-pub fn render_tiles_parallel(jobs: Vec<BatchTileJob>, max_workers: usize) -> Vec<(usize, Result<BatchTileResult, String>)> {
+pub fn render_tiles_parallel(
+    jobs: Vec<BatchTileJob>,
+    max_workers: usize,
+) -> Vec<(usize, Result<BatchTileResult, String>)> {
     let n_results = jobs.len();
     let n_workers = max_workers.max(1).min(jobs.len());
     if n_results == 0 {
@@ -81,10 +84,20 @@ pub fn render_tiles_parallel(jobs: Vec<BatchTileJob>, max_workers: usize) -> Vec
     final_results
 }
 
-fn render_single(raster: &Arc<CachedRaster>, job: &BatchTileJob) -> Result<BatchTileResult, String> {
+fn render_single(
+    raster: &Arc<CachedRaster>,
+    job: &BatchTileJob,
+) -> Result<BatchTileResult, String> {
     let (png_data, rendered) = crate::tile::render_raster_tile_ex(
-        raster, job.z, job.x, job.y, 256, &job.bands,
-        Some(job.resampling), job.stretch.as_ref(), false,
+        raster,
+        job.z,
+        job.x,
+        job.y,
+        256,
+        &job.bands,
+        Some(job.resampling),
+        job.stretch.as_ref(),
+        false,
     )?;
 
     Ok(BatchTileResult {

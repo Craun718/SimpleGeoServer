@@ -135,22 +135,24 @@ pub static RENDER_FARM: LazyLock<Arc<RenderFarm>> = LazyLock::new(|| {
         .max(2);
     for _ in 0..num_workers {
         let f = farm.clone();
-        std::thread::spawn(move || loop {
-            let job = {
-                let mut queue = f.queue.lock().unwrap();
-                queue.pop()
-            };
-            if let Some(job) = job {
-                let result = f.process_job(job);
-                if let Some((job, result)) = result {
-                    let mut pending = f.pending.lock().unwrap();
-                    let key = (job.z, job.x, job.y);
-                    if let Some(response) = pending.remove(&key) {
-                        let _ = response.sender.send(result);
+        std::thread::spawn(move || {
+            loop {
+                let job = {
+                    let mut queue = f.queue.lock().unwrap();
+                    queue.pop()
+                };
+                if let Some(job) = job {
+                    let result = f.process_job(job);
+                    if let Some((job, result)) = result {
+                        let mut pending = f.pending.lock().unwrap();
+                        let key = (job.z, job.x, job.y);
+                        if let Some(response) = pending.remove(&key) {
+                            let _ = response.sender.send(result);
+                        }
                     }
+                } else {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(5));
             }
         });
     }
@@ -199,7 +201,8 @@ fn render_tile_sync(
         let lng = tile::mercator_to_lng(wx);
         let lat = tile::mercator_to_lat(wy);
         let (col_i, row_i) = if use_native {
-            if let Some((nx, ny)) = crate::reproject::wgs84_to_native_crs(lng, lat, &raster.geo_key) {
+            if let Some((nx, ny)) = crate::reproject::wgs84_to_native_crs(lng, lat, &raster.geo_key)
+            {
                 if nc_span_x.abs() <= f64::EPSILON || nc_span_y.abs() <= f64::EPSILON {
                     continue;
                 }
@@ -312,8 +315,14 @@ fn render_tile_sync(
     let buf_v1 = (row_off + src_h.saturating_sub(1)) as f64 / ov_height_m1;
 
     let uvs = [
-        u0 as f32, u1 as f32, v0 as f32, v1 as f32,
-        buf_u0 as f32, buf_u1 as f32, buf_v0 as f32, buf_v1 as f32,
+        u0 as f32,
+        u1 as f32,
+        v0 as f32,
+        v1 as f32,
+        buf_u0 as f32,
+        buf_u1 as f32,
+        buf_v0 as f32,
+        buf_v1 as f32,
     ];
 
     #[cfg(feature = "gpu")]
@@ -352,8 +361,8 @@ fn render_tile_sync(
     }
 
     let (rgba, _rendered) = tile::render_raster_tile_cpu_rgba(
-        &raster, z, x, y, size, bands, stretch, resampling,
-        col_off, row_off, src_w, src_h, step, ifd_idx,
+        &raster, z, x, y, size, bands, stretch, resampling, col_off, row_off, src_w, src_h, step,
+        ifd_idx,
     )?;
 
     encode_webp(&rgba, size as usize)

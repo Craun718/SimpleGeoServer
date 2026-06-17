@@ -204,5 +204,3 @@ pub fn sample_lanczos3(
         f64::NAN
     }
 }
-
-

@@ -45,8 +45,8 @@ fn load_and_cache_shapefile(path: &str) -> Result<Arc<CachedShapefile>, String> 
         crate::reproject::KnownCrs::Wgs84
     };
 
-    let shapes = shapefile::read_shapes(path)
-        .map_err(|e| format!("Failed to read shapes: {}", e))?;
+    let shapes =
+        shapefile::read_shapes(path).map_err(|e| format!("Failed to read shapes: {}", e))?;
 
     let geometries = convert_shapes(shapes, crs);
     let feature_count = geometries.len() as u32;
@@ -105,10 +105,9 @@ fn load_and_cache_shapefile(path: &str) -> Result<Arc<CachedShapefile>, String> 
         vec![None; feature_count as usize]
     };
 
-    let extent = geometries
-        .iter()
-        .filter_map(|g| g.bounding_rect())
-        .fold(None, |acc: Option<geo_types::Rect<f64>>, r| {
+    let extent = geometries.iter().filter_map(|g| g.bounding_rect()).fold(
+        None,
+        |acc: Option<geo_types::Rect<f64>>, r| {
             Some(match acc {
                 Some(e) => geo_types::Rect::new(
                     geo_types::coord! {
@@ -122,7 +121,8 @@ fn load_and_cache_shapefile(path: &str) -> Result<Arc<CachedShapefile>, String> 
                 ),
                 None => r,
             })
-        });
+        },
+    );
     let extent_arr = match extent {
         Some(r) => [r.min().x, r.min().y, r.max().x, r.max().y],
         None => [0.0, 0.0, 0.0, 0.0],
@@ -151,8 +151,7 @@ fn parse_prj_file(path: &std::path::Path) -> Option<crate::reproject::KnownCrs> 
             }
         }
     }
-    if content.contains("4326") || content.contains("WGS 84") || content.contains("GCS_WGS_1984")
-    {
+    if content.contains("4326") || content.contains("WGS 84") || content.contains("GCS_WGS_1984") {
         return Some(crate::reproject::KnownCrs::Wgs84);
     }
     if content.contains("3857") || content.contains("900913") || content.contains("Mercator") {

@@ -197,7 +197,14 @@ fn get_disk_cache_dir() -> &'static Path {
     })
 }
 
-fn tile_cache_path(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode, is_webp: bool) -> PathBuf {
+fn tile_cache_path(
+    path: &str,
+    z: u32,
+    x: u32,
+    y: u32,
+    resampling: ResamplingMode,
+    is_webp: bool,
+) -> PathBuf {
     let hash = get_content_hash(path);
     let res_str = resampling as u8;
     let ext = if is_webp { "webp" } else { "png" };
@@ -208,7 +215,14 @@ fn tile_cache_path(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMod
         .join(format!("{}.{}", y, ext))
 }
 
-pub fn disk_cache_get(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode, is_webp: bool) -> Option<Vec<u8>> {
+pub fn disk_cache_get(
+    path: &str,
+    z: u32,
+    x: u32,
+    y: u32,
+    resampling: ResamplingMode,
+    is_webp: bool,
+) -> Option<Vec<u8>> {
     let p = tile_cache_path(path, z, x, y, resampling, is_webp);
     if p.exists() {
         std::fs::read(p).ok()
@@ -217,7 +231,15 @@ pub fn disk_cache_get(path: &str, z: u32, x: u32, y: u32, resampling: Resampling
     }
 }
 
-pub fn disk_cache_set(path: &str, z: u32, x: u32, y: u32, resampling: ResamplingMode, is_webp: bool, data: &[u8]) {
+pub fn disk_cache_set(
+    path: &str,
+    z: u32,
+    x: u32,
+    y: u32,
+    resampling: ResamplingMode,
+    is_webp: bool,
+    data: &[u8],
+) {
     let p = tile_cache_path(path, z, x, y, resampling, is_webp);
     if let Some(parent) = p.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -242,9 +264,15 @@ static CACHE_HITS_L2: AtomicU64 = AtomicU64::new(0);
 static CACHE_HITS_L3: AtomicU64 = AtomicU64::new(0);
 static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
 
-pub fn record_l2_hit() { CACHE_HITS_L2.fetch_add(1, Ordering::Relaxed); }
-pub fn record_l3_hit() { CACHE_HITS_L3.fetch_add(1, Ordering::Relaxed); }
-pub fn record_miss() { CACHE_MISSES.fetch_add(1, Ordering::Relaxed); }
+pub fn record_l2_hit() {
+    CACHE_HITS_L2.fetch_add(1, Ordering::Relaxed);
+}
+pub fn record_l3_hit() {
+    CACHE_HITS_L3.fetch_add(1, Ordering::Relaxed);
+}
+pub fn record_miss() {
+    CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+}
 
 #[allow(dead_code)]
 pub fn cache_stats() -> (u64, u64, u64) {

@@ -27,7 +27,10 @@ impl DataSourceRegistry {
 
     pub fn mount(&self, name: String, source: Arc<dyn DataSource>) -> Result<(), String> {
         {
-            let mut sources = self.sources.write().map_err(|e| format!("Lock error: {}", e))?;
+            let mut sources = self
+                .sources
+                .write()
+                .map_err(|e| format!("Lock error: {}", e))?;
             if sources.contains_key(&name) {
                 return Err(format!("DataSource '{}' already exists", name));
             }
@@ -48,8 +51,13 @@ impl DataSourceRegistry {
 
     pub fn unmount(&self, name: &str) -> Result<(), String> {
         {
-            let mut sources = self.sources.write().map_err(|e| format!("Lock error: {}", e))?;
-            sources.remove(name).ok_or_else(|| format!("DataSource '{}' not found", name))?;
+            let mut sources = self
+                .sources
+                .write()
+                .map_err(|e| format!("Lock error: {}", e))?;
+            sources
+                .remove(name)
+                .ok_or_else(|| format!("DataSource '{}' not found", name))?;
         }
         self.notify(RegistryEvent::Unmounted(name.to_string()));
         Ok(())
@@ -73,12 +81,7 @@ impl DataSourceRegistry {
     }
 
     pub fn list_names(&self) -> Vec<String> {
-        self.sources
-            .read()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect()
+        self.sources.read().unwrap().keys().cloned().collect()
     }
 
     #[allow(dead_code)]

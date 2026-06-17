@@ -35,7 +35,9 @@ fn read_geo_transform_tile(path: &str) -> [f64; 6] {
                 .filter_map(|l| l.trim().parse::<f64>().ok())
                 .collect();
             if values.len() == 6 {
-                return [values[4], values[0], values[1], values[5], values[2], values[3]];
+                return [
+                    values[4], values[0], values[1], values[5], values[2], values[3],
+                ];
             }
         }
     }
@@ -45,14 +47,7 @@ fn read_geo_transform_tile(path: &str) -> [f64; 6] {
             if let Ok(tiepoint) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelTiepointTag) {
                 if let Ok(scale) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelPixelScaleTag) {
                     if tiepoint.len() >= 6 && scale.len() >= 3 {
-                        return [
-                            tiepoint[3],
-                            scale[0],
-                            0.0,
-                            tiepoint[4],
-                            0.0,
-                            -scale[1],
-                        ];
+                        return [tiepoint[3], scale[0], 0.0, tiepoint[4], 0.0, -scale[1]];
                     }
                 }
             }
@@ -143,7 +138,11 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
             .ok()
             .flatten()
             .unwrap_or(1);
-        if planar == 2 { InterleaveType::Planar } else { InterleaveType::Chunky }
+        if planar == 2 {
+            InterleaveType::Planar
+        } else {
+            InterleaveType::Chunky
+        }
     };
 
     let bands = {
@@ -197,7 +196,9 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
         let chunks_per_band = total_chunks / bands as u32;
         for chunk_idx in 0..total_chunks {
             let band = (chunk_idx / chunks_per_band) as usize;
-            if band >= bands { break; }
+            if band >= bands {
+                break;
+            }
             let chunk_data = decoder
                 .read_chunk(chunk_idx)
                 .map_err(|e| format!("Failed to read chunk {chunk_idx}: {e}"))?;
@@ -205,17 +206,25 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
             let (cdw, cdh) = decoder.chunk_data_dimensions(chunk_idx);
             let pixels_in_chunk = cdw as usize * cdh as usize;
             for p in 0..pixels_in_chunk {
-                if p >= chunk_f64.len() { break; }
+                if p >= chunk_f64.len() {
+                    break;
+                }
                 let val = chunk_f64[p];
-                if crate::raster::is_nodata(val, no_data) { continue; }
+                if crate::raster::is_nodata(val, no_data) {
+                    continue;
+                }
                 valid_counts[band] += 1;
                 let n = valid_counts[band] as f64;
                 let delta = val - means[band];
                 means[band] += delta / n;
                 let delta2 = val - means[band];
                 m2[band] += delta * delta2;
-                if val < min_values[band] { min_values[band] = val; }
-                if val > max_values[band] { max_values[band] = val; }
+                if val < min_values[band] {
+                    min_values[band] = val;
+                }
+                if val > max_values[band] {
+                    max_values[band] = val;
+                }
                 if percentile_samples[band].len() < MAX_PERCENTILE_SAMPLES {
                     percentile_samples[band].push(val);
                 }
@@ -381,7 +390,13 @@ fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
 
     let ovr_path = find_ovr_file(path);
     if let Some(ref ovr_path) = ovr_path {
-        match super::raster_ovr::parse_ovr_ifd_offsets(ovr_path, chunk_type, chunk_w, chunk_h, all_ifds.len()) {
+        match super::raster_ovr::parse_ovr_ifd_offsets(
+            ovr_path,
+            chunk_type,
+            chunk_w,
+            chunk_h,
+            all_ifds.len(),
+        ) {
             Ok(ovr_ifds) => {
                 tracing::info!("Loaded {} overview(s) from .ovr file", ovr_ifds.len());
                 all_ifds.extend(ovr_ifds);

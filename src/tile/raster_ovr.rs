@@ -13,8 +13,8 @@ pub fn parse_ovr_ifd_offsets(
     _base_chunk_h: u32,
     base_index: usize,
 ) -> Result<Vec<super::types::IfdInfo>, String> {
-    let mut file = std::fs::File::open(ovr_path)
-        .map_err(|e| format!("Failed to open .ovr: {}", e))?;
+    let mut file =
+        std::fs::File::open(ovr_path).map_err(|e| format!("Failed to open .ovr: {}", e))?;
 
     let mut header = [0u8; 8];
     file.read_exact(&mut header)
@@ -89,18 +89,22 @@ pub fn parse_ovr_ifd_offsets(
             } else {
                 u32::from_be_bytes(next_buf)
             };
-            current_offset = if next_off != 0 { Some(next_off as u64) } else { None };
+            current_offset = if next_off != 0 {
+                Some(next_off as u64)
+            } else {
+                None
+            };
             continue;
         }
 
-        let (chunk_type, chunk_w, chunk_h) =
-            if let Some(tw) = read_u16_ifd_entry(&entries, 0x0142) {
-                let tl = read_u16_ifd_entry(&entries, 0x0143).unwrap_or(tw);
-                (ChunkType::Tile, tw, tl)
-            } else {
-                let rows_per_strip = read_u16_ifd_entry(&entries, 0x0117).unwrap_or(height);
-                (ChunkType::Strip, width, rows_per_strip)
-            };
+        let (chunk_type, chunk_w, chunk_h) = if let Some(tw) = read_u16_ifd_entry(&entries, 0x0142)
+        {
+            let tl = read_u16_ifd_entry(&entries, 0x0143).unwrap_or(tw);
+            (ChunkType::Tile, tw, tl)
+        } else {
+            let rows_per_strip = read_u16_ifd_entry(&entries, 0x0117).unwrap_or(height);
+            (ChunkType::Strip, width, rows_per_strip)
+        };
 
         let cpr = match chunk_type {
             ChunkType::Strip => 1u32,
@@ -134,7 +138,11 @@ pub fn parse_ovr_ifd_offsets(
         } else {
             u32::from_be_bytes(next_buf)
         };
-        current_offset = if next_off != 0 { Some(next_off as u64) } else { None };
+        current_offset = if next_off != 0 {
+            Some(next_off as u64)
+        } else {
+            None
+        };
     }
 
     Ok(ifds)
@@ -196,8 +204,7 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
     use tiff::encoder::{TiffEncoder, colortype};
     use tiff::tags::ExtraSamples;
 
-    let file = std::fs::File::open(path)
-        .map_err(|e| format!("Failed to open {}: {}", path, e))?;
+    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open {}: {}", path, e))?;
     let mut decoder = Decoder::new(std::io::BufReader::new(file))
         .map_err(|e| format!("Failed to create decoder: {}", e))?
         .with_limits(Limits::unlimited());
@@ -222,10 +229,10 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
     };
 
     let ovr_path = format!("{}.ovr", path);
-    let file_out = std::fs::File::create(&ovr_path)
-        .map_err(|e| format!("Failed to create .ovr: {}", e))?;
-    let mut tiff = TiffEncoder::new(file_out)
-        .map_err(|e| format!("Failed to create TIFF encoder: {}", e))?;
+    let file_out =
+        std::fs::File::create(&ovr_path).map_err(|e| format!("Failed to create .ovr: {}", e))?;
+    let mut tiff =
+        TiffEncoder::new(file_out).map_err(|e| format!("Failed to create TIFF encoder: {}", e))?;
 
     let min_size = 256u32;
     let max_levels = 8usize;
@@ -255,14 +262,8 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
             break;
         }
 
-        let downsampled = bilinear_downsample_f64(
-            &f64_data,
-            prev_w,
-            prev_h,
-            all_bands,
-            new_w,
-            new_h,
-        );
+        let downsampled =
+            bilinear_downsample_f64(&f64_data, prev_w, prev_h, all_bands, new_w, new_h);
 
         macro_rules! write_level {
             ($colortype:ty, $inner_type:ty, $max_val:expr) => {{
@@ -277,10 +278,8 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
                     .map_err(|e| format!("Failed to write .ovr level {}: {}", level_count, e))?;
             }};
             ($colortype:ty, $inner_type:ty) => {{
-                let converted: Vec<$inner_type> = downsampled
-                    .iter()
-                    .map(|v| *v as $inner_type)
-                    .collect();
+                let converted: Vec<$inner_type> =
+                    downsampled.iter().map(|v| *v as $inner_type).collect();
                 tiff.write_image::<$colortype>(new_w, new_h, &converted)
                     .map_err(|e| format!("Failed to write .ovr level {}: {}", level_count, e))?;
             }};
@@ -290,19 +289,31 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
             tiff::decoder::DecodingResult::U8(_) => match all_bands {
                 1 => write_level!(colortype::Gray8, u8, 255.0),
                 2 => {
-                    let gray: Vec<u8> = downsampled.iter().step_by(2).map(|v| v.round().clamp(0.0, 255.0) as u8).collect();
-                    let extra: Vec<u8> = downsampled.iter().skip(1).step_by(2).map(|v| v.round().clamp(0.0, 255.0) as u8).collect();
+                    let gray: Vec<u8> = downsampled
+                        .iter()
+                        .step_by(2)
+                        .map(|v| v.round().clamp(0.0, 255.0) as u8)
+                        .collect();
+                    let extra: Vec<u8> = downsampled
+                        .iter()
+                        .skip(1)
+                        .step_by(2)
+                        .map(|v| v.round().clamp(0.0, 255.0) as u8)
+                        .collect();
                     let mut interleaved = Vec::with_capacity(gray.len() + extra.len());
                     for i in 0..gray.len() {
                         interleaved.push(gray[i]);
                         interleaved.push(extra[i]);
                     }
-                    let mut image = tiff.new_image::<colortype::Gray8>(new_w, new_h)
+                    let mut image = tiff
+                        .new_image::<colortype::Gray8>(new_w, new_h)
                         .map_err(|e| format!("Failed to create image encoder: {}", e))?;
-                    image.extra_samples(&[ExtraSamples::Unspecified])
+                    image
+                        .extra_samples(&[ExtraSamples::Unspecified])
                         .map_err(|e| format!("Failed to set extra samples: {}", e))?;
-                    image.write_data(&interleaved)
-                        .map_err(|e| format!("Failed to write .ovr level {}: {}", level_count, e))?;
+                    image.write_data(&interleaved).map_err(|e| {
+                        format!("Failed to write .ovr level {}: {}", level_count, e)
+                    })?;
                 }
                 3 => write_level!(colortype::RGB8, u8, 255.0),
                 4 => write_level!(colortype::RGBA8, u8, 255.0),
@@ -311,19 +322,31 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
             tiff::decoder::DecodingResult::U16(_) => match all_bands {
                 1 => write_level!(colortype::Gray16, u16, 65535.0),
                 2 => {
-                    let gray: Vec<u16> = downsampled.iter().step_by(2).map(|v| v.round().clamp(0.0, 65535.0) as u16).collect();
-                    let extra: Vec<u16> = downsampled.iter().skip(1).step_by(2).map(|v| v.round().clamp(0.0, 65535.0) as u16).collect();
+                    let gray: Vec<u16> = downsampled
+                        .iter()
+                        .step_by(2)
+                        .map(|v| v.round().clamp(0.0, 65535.0) as u16)
+                        .collect();
+                    let extra: Vec<u16> = downsampled
+                        .iter()
+                        .skip(1)
+                        .step_by(2)
+                        .map(|v| v.round().clamp(0.0, 65535.0) as u16)
+                        .collect();
                     let mut interleaved = Vec::with_capacity(gray.len() + extra.len());
                     for i in 0..gray.len() {
                         interleaved.push(gray[i]);
                         interleaved.push(extra[i]);
                     }
-                    let mut image = tiff.new_image::<colortype::Gray16>(new_w, new_h)
+                    let mut image = tiff
+                        .new_image::<colortype::Gray16>(new_w, new_h)
                         .map_err(|e| format!("Failed to create image encoder: {}", e))?;
-                    image.extra_samples(&[ExtraSamples::Unspecified])
+                    image
+                        .extra_samples(&[ExtraSamples::Unspecified])
                         .map_err(|e| format!("Failed to set extra samples: {}", e))?;
-                    image.write_data(&interleaved)
-                        .map_err(|e| format!("Failed to write .ovr level {}: {}", level_count, e))?;
+                    image.write_data(&interleaved).map_err(|e| {
+                        format!("Failed to write .ovr level {}: {}", level_count, e)
+                    })?;
                 }
                 3 => write_level!(colortype::RGB16, u16, 65535.0),
                 4 => write_level!(colortype::RGBA16, u16, 65535.0),
@@ -333,18 +356,26 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
                 1 => write_level!(colortype::Gray32Float, f32),
                 2 => {
                     let gray: Vec<f32> = downsampled.iter().step_by(2).map(|v| *v as f32).collect();
-                    let extra: Vec<f32> = downsampled.iter().skip(1).step_by(2).map(|v| *v as f32).collect();
+                    let extra: Vec<f32> = downsampled
+                        .iter()
+                        .skip(1)
+                        .step_by(2)
+                        .map(|v| *v as f32)
+                        .collect();
                     let mut interleaved = Vec::with_capacity(gray.len() + extra.len());
                     for i in 0..gray.len() {
                         interleaved.push(gray[i]);
                         interleaved.push(extra[i]);
                     }
-                    let mut image = tiff.new_image::<colortype::Gray32Float>(new_w, new_h)
+                    let mut image = tiff
+                        .new_image::<colortype::Gray32Float>(new_w, new_h)
                         .map_err(|e| format!("Failed to create image encoder: {}", e))?;
-                    image.extra_samples(&[ExtraSamples::Unspecified])
+                    image
+                        .extra_samples(&[ExtraSamples::Unspecified])
                         .map_err(|e| format!("Failed to set extra samples: {}", e))?;
-                    image.write_data(&interleaved)
-                        .map_err(|e| format!("Failed to write .ovr level {}: {}", level_count, e))?;
+                    image.write_data(&interleaved).map_err(|e| {
+                        format!("Failed to write .ovr level {}: {}", level_count, e)
+                    })?;
                 }
                 3 => write_level!(colortype::RGB32Float, f32),
                 4 => write_level!(colortype::RGBA32Float, f32),
@@ -355,10 +386,7 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
                 3 => write_level!(colortype::RGB64Float, f64),
                 4 => write_level!(colortype::RGBA64Float, f64),
                 _ => {
-                    return Err(format!(
-                        "Unsupported band count {} for f64 .ovr",
-                        all_bands
-                    ));
+                    return Err(format!("Unsupported band count {} for f64 .ovr", all_bands));
                 }
             },
             _ => {

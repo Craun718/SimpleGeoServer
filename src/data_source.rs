@@ -43,19 +43,9 @@ pub trait DataSource: Send + Sync {
         params: &crate::TileQueryParams,
     ) -> DataSourceResult<Vec<u8>>;
 
-    fn render_raster_tile_webp(
-        &self,
-        z: u32,
-        x: u32,
-        y: u32,
-    ) -> DataSourceResult<Vec<u8>>;
+    fn render_raster_tile_webp(&self, z: u32, x: u32, y: u32) -> DataSourceResult<Vec<u8>>;
 
-    fn render_vector_tile(
-        &self,
-        z: u32,
-        x: u32,
-        y: u32,
-    ) -> DataSourceResult<Vec<u8>>;
+    fn render_vector_tile(&self, z: u32, x: u32, y: u32) -> DataSourceResult<Vec<u8>>;
 
     fn render_map_bbox(
         &self,
@@ -120,7 +110,9 @@ impl DataSource for RasterDataSource {
                 return Ok(cached.clone());
             }
         }
-        if let Some(cached) = crate::tile_cache::disk_cache_get(&self.path, z, x, y, resampling, false) {
+        if let Some(cached) =
+            crate::tile_cache::disk_cache_get(&self.path, z, x, y, resampling, false)
+        {
             crate::tile_cache::record_l3_hit();
             let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
             l2.insert(cache_key, cached.clone());
@@ -128,18 +120,31 @@ impl DataSource for RasterDataSource {
         }
         crate::tile_cache::record_miss();
 
-        let raster = tile::get_raster(&self.path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let raster =
+            tile::get_raster(&self.path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-        let stretch = params.stretch.as_deref().map(|s| crate::resample::StretchConfig {
-            method: crate::resample::StretchMethod::from_str(s),
-            min_percent: None,
-            max_percent: None,
-            std_dev_factor: params.std_dev_factor,
-        });
+        let stretch = params
+            .stretch
+            .as_deref()
+            .map(|s| crate::resample::StretchConfig {
+                method: crate::resample::StretchMethod::from_str(s),
+                min_percent: None,
+                max_percent: None,
+                std_dev_factor: params.std_dev_factor,
+            });
 
-        let (png_data, _rendered) =
-            tile::render_raster_tile_ex(&raster, z, x, y, 256, &bands, Some(resampling), stretch.as_ref(), false)
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let (png_data, _rendered) = tile::render_raster_tile_ex(
+            &raster,
+            z,
+            x,
+            y,
+            256,
+            &bands,
+            Some(resampling),
+            stretch.as_ref(),
+            false,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         crate::tile_cache::disk_cache_set(&self.path, z, x, y, resampling, false, &png_data);
         {
@@ -163,7 +168,9 @@ impl DataSource for RasterDataSource {
             }
         }
         // L3 check
-        if let Some(cached) = crate::tile_cache::disk_cache_get(&self.path, z, x, y, resampling, true) {
+        if let Some(cached) =
+            crate::tile_cache::disk_cache_get(&self.path, z, x, y, resampling, true)
+        {
             crate::tile_cache::record_l3_hit();
             let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
             l2.insert(cache_key, cached.clone());
@@ -174,8 +181,13 @@ impl DataSource for RasterDataSource {
         // Render via render farm (GPU/CPU → WebP) with block_on bridge
         let farm = &crate::render_farm::RENDER_FARM;
         let result = crate::render_farm::block_on(farm.render_tile(
-            self.path.clone(), z, x, y,
-            vec![1, 2, 3], None, resampling,
+            self.path.clone(),
+            z,
+            x,
+            y,
+            vec![1, 2, 3],
+            None,
+            resampling,
         ))
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
@@ -204,7 +216,8 @@ impl DataSource for RasterDataSource {
         bands: &[u32],
         transparent: bool,
     ) -> DataSourceResult<Vec<u8>> {
-        let raster = tile::get_raster(&self.path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let raster =
+            tile::get_raster(&self.path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
         tile::render_map_bbox(&raster, bbox, width, height, bands, transparent)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
     }

@@ -22,7 +22,12 @@ pub struct RasterBlockConfig {
 
 impl Default for RasterBlockConfig {
     fn default() -> Self {
-        Self { block_width: 512, block_height: 512, overlap: 0, step: 1 }
+        Self {
+            block_width: 512,
+            block_height: 512,
+            overlap: 0,
+            step: 1,
+        }
     }
 }
 

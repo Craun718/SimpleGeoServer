@@ -104,7 +104,8 @@ pub fn read_raster_region(
                             if c % step == 0 {
                                 let col_in_raster = col_off + c;
                                 let out_col = (c / step) as usize;
-                                let in_idx = (strip_row_offset * ch.0 as u32 + col_in_raster) as usize;
+                                let in_idx =
+                                    (strip_row_offset * ch.0 as u32 + col_in_raster) as usize;
                                 let out_idx = (out_row * out_w as usize + out_col) * bands;
                                 for b in 0..bands {
                                     let src_idx = in_idx * bands + b;
@@ -143,11 +144,23 @@ pub fn read_raster_region(
                 if let Ok(data) = decoder.read_chunk(t) {
                     let f64_data = crate::raster::decode_result_to_f64_vec(&data);
 
-                    let over_x = if tile_col >= col_off { 0u32 } else { col_off - tile_col };
-                    let over_y = if tile_row >= row_off { 0u32 } else { row_off - tile_row };
+                    let over_x = if tile_col >= col_off {
+                        0u32
+                    } else {
+                        col_off - tile_col
+                    };
+                    let over_y = if tile_row >= row_off {
+                        0u32
+                    } else {
+                        row_off - tile_row
+                    };
 
-                    let read_w = tile_w.saturating_sub(over_x).min(width.saturating_sub(tile_col.saturating_sub(col_off)));
-                    let read_h = tile_h.saturating_sub(over_y).min(height.saturating_sub(tile_row.saturating_sub(row_off)));
+                    let read_w = tile_w
+                        .saturating_sub(over_x)
+                        .min(width.saturating_sub(tile_col.saturating_sub(col_off)));
+                    let read_h = tile_h
+                        .saturating_sub(over_y)
+                        .min(height.saturating_sub(tile_row.saturating_sub(row_off)));
 
                     for ly in 0..read_h {
                         if ly % step != 0 {
