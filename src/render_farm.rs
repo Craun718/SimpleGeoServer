@@ -6,6 +6,7 @@ use std::time::Instant;
 use once_cell::sync::Lazy;
 use tokio::sync::oneshot;
 
+#[cfg(feature = "gpu")]
 use crate::gpu_renderer::GPU_RENDERER;
 use crate::resample::{compute_stretch_bounds, ResamplingMode, StretchConfig};
 use crate::tile;

@@ -35,13 +35,13 @@ mod data_source;
 #[cfg(feature = "gpu")]
 mod gpu_renderer;
 mod protocols;
-mod raster;
+pub mod raster;
 mod registry;
 mod render_farm;
 mod reproject;
 mod resample;
 mod shapefile_reader;
-mod tile;
+pub mod tile;
 mod tile_cache;
 
 #[derive(Parser)]

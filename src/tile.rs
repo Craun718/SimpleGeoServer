@@ -16,7 +16,7 @@ pub(crate) const C: f64 = R * std::f64::consts::PI;
 pub use crate::resample::{ResamplingMode, StretchConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum InterleaveType {
+pub enum InterleaveType {
     Chunky,
     Planar,
 }
@@ -170,7 +170,7 @@ pub struct GeoFileInfo {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct IfdInfo {
+pub struct IfdInfo {
     pub(crate) index: usize,
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -185,7 +185,7 @@ pub(crate) struct IfdInfo {
 }
 
 #[allow(dead_code)]
-pub(crate) struct CachedRaster {
+pub struct CachedRaster {
     pub(crate) file_path: String,
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -609,7 +609,7 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
 
 // ─── 栅格加载与缓存 ───
 
-pub(crate) fn get_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
+pub fn get_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
     {
         let cache = RASTER_CACHE
             .read()
