@@ -44,14 +44,14 @@ impl Ord for TileJob {
     }
 }
 
-struct PendingResponse {
-    sender: oneshot::Sender<Result<Vec<u8>, String>>,
+struct PendingEntry {
+    senders: Vec<oneshot::Sender<Result<Vec<u8>, String>>>,
     _submit_time: Instant,
 }
 
 pub struct RenderFarm {
     queue: Mutex<BinaryHeap<TileJob>>,
-    pending: Mutex<std::collections::HashMap<(u32, u32, u32), PendingResponse>>,
+    pending: Mutex<std::collections::HashMap<(u32, u32, u32), PendingEntry>>,
     _next_job_id: AtomicU64,
 }
 
@@ -76,35 +76,33 @@ impl RenderFarm {
     ) -> Result<Vec<u8>, String> {
         let (sender, receiver) = oneshot::channel();
         let submit_time = Instant::now();
+        let key = (z, x, y);
 
-        let priority = (z as u64) << 40 | (x.abs_diff(0) as u64) << 20 | (y.abs_diff(0) as u64);
-
-        let job = TileJob {
-            path,
-            z,
-            x,
-            y,
-            bands,
-            stretch,
-            resampling,
-            priority,
-            _submit_time: submit_time,
+        let should_push = {
+            let mut pending = self.pending.lock().unwrap();
+            if let Some(entry) = pending.get_mut(&key) {
+                entry.senders.push(sender);
+                false
+            } else {
+                pending.insert(key, PendingEntry {
+                    senders: vec![sender],
+                    _submit_time: submit_time,
+                });
+                true
+            }
         };
 
-        {
+        if should_push {
+            let priority = (z as u64) << 40 | (x.abs_diff(0) as u64) << 20 | (y.abs_diff(0) as u64);
+            let job = TileJob {
+                path,
+                z, x, y,
+                bands, stretch, resampling,
+                priority,
+                _submit_time: submit_time,
+            };
             let mut queue = self.queue.lock().unwrap();
             queue.push(job);
-        }
-
-        {
-            let mut pending = self.pending.lock().unwrap();
-            pending.insert(
-                (z, x, y),
-                PendingResponse {
-                    sender,
-                    _submit_time: submit_time,
-                },
-            );
         }
 
         receiver
@@ -146,8 +144,10 @@ pub static RENDER_FARM: LazyLock<Arc<RenderFarm>> = LazyLock::new(|| {
                     if let Some((job, result)) = result {
                         let mut pending = f.pending.lock().unwrap();
                         let key = (job.z, job.x, job.y);
-                        if let Some(response) = pending.remove(&key) {
-                            let _ = response.sender.send(result);
+                        if let Some(entry) = pending.remove(&key) {
+                            for sender in entry.senders {
+                                let _ = sender.send(result.clone());
+                            }
                         }
                     }
                 } else {
@@ -160,6 +160,7 @@ pub static RENDER_FARM: LazyLock<Arc<RenderFarm>> = LazyLock::new(|| {
     farm
 });
 
+#[cfg_attr(not(feature = "gpu"), allow(unused_variables))]
 fn render_tile_sync(
     path: &str,
     z: u32,

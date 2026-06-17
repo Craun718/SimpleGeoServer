@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::BufReader;
 use std::mem::size_of;
@@ -9,8 +9,57 @@ use tiff::decoder::{ChunkType, Decoder, Limits};
 
 use super::types::{CachedRaster, IfdInfo, InterleaveType};
 
-static RASTER_CACHE: LazyLock<RwLock<HashMap<String, Arc<CachedRaster>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+const RASTER_CACHE_MAX_ENTRIES: usize = 50;
+
+struct RasterCacheInner {
+    map: HashMap<String, Arc<CachedRaster>>,
+    order: VecDeque<String>,
+    max_entries: usize,
+}
+
+impl RasterCacheInner {
+    fn new(max_entries: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::with_capacity(max_entries),
+            max_entries,
+        }
+    }
+
+    fn get(&mut self, path: &str) -> Option<&Arc<CachedRaster>> {
+        if self.map.contains_key(path) {
+            let _ = self.touch(path);
+            self.map.get(path)
+        } else {
+            None
+        }
+    }
+
+    fn insert(&mut self, path: String, raster: Arc<CachedRaster>) {
+        if self.map.contains_key(&path) {
+            return;
+        }
+        while self.map.len() >= self.max_entries {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            } else {
+                break;
+            }
+        }
+        self.map.insert(path.clone(), raster);
+        self.order.push_back(path);
+    }
+
+    fn touch(&mut self, path: &str) {
+        if let Some(pos) = self.order.iter().position(|p| p == path) {
+            self.order.remove(pos);
+            self.order.push_back(path.to_string());
+        }
+    }
+}
+
+static RASTER_CACHE: LazyLock<RwLock<RasterCacheInner>> =
+    LazyLock::new(|| RwLock::new(RasterCacheInner::new(RASTER_CACHE_MAX_ENTRIES)));
 
 fn find_ovr_file(tif_path: &str) -> Option<String> {
     let p = std::path::Path::new(tif_path);
@@ -59,8 +108,8 @@ fn read_geo_transform_tile(path: &str) -> [f64; 6] {
 
 pub fn get_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
     {
-        let cache = RASTER_CACHE
-            .read()
+        let mut cache = RASTER_CACHE
+            .write()
             .map_err(|e| format!("Cache lock error: {}", e))?;
         if let Some(raster) = cache.get(path) {
             return Ok(Arc::clone(raster));
@@ -94,14 +143,24 @@ fn estimate_raster_size_bytes(raster: &CachedRaster) -> u64 {
 
 pub fn raster_memory_cache_size_bytes() -> Result<u64, String> {
     let cache = RASTER_CACHE
-        .read()
+        .write()
         .map_err(|e| format!("Cache lock error: {}", e))?;
 
-    Ok(cache.iter().fold(0u64, |total, (path, raster)| {
+    Ok(cache.map.iter().fold(0u64, |total, (path, raster)| {
         total
             .saturating_add(path.capacity() as u64)
             .saturating_add(estimate_raster_size_bytes(raster.as_ref()))
     }))
+}
+
+#[allow(dead_code)]
+pub fn clear_raster_memory_cache() -> Result<(), String> {
+    let mut cache = RASTER_CACHE
+        .write()
+        .map_err(|e| format!("Cache lock error: {}", e))?;
+    cache.map.clear();
+    cache.order.clear();
+    Ok(())
 }
 
 fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {

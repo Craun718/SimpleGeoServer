@@ -4,6 +4,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
+use std::time::SystemTime;
 
 use crate::resample::ResamplingMode;
 
@@ -245,6 +246,7 @@ pub fn disk_cache_set(
         let _ = std::fs::create_dir_all(parent);
     }
     let _ = std::fs::write(&p, data);
+    evict_disk_cache_if_needed();
 }
 
 pub fn disk_cache_size_bytes() -> u64 {
@@ -293,3 +295,59 @@ pub fn set_l2_cache_size_mb(mb: u64) {
 
 pub static L2_CACHE: LazyLock<Mutex<MemCache>> =
     LazyLock::new(|| Mutex::new(MemCache::new(L2_CACHE_MAX_MB.load(Ordering::Relaxed))));
+
+// ─── L3 Disk Cache Eviction ───
+
+const DISK_CACHE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GB
+const EVICTION_CHECK_INTERVAL: u64 = 10;
+
+static DISK_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+static DISK_CACHE_MAX: AtomicU64 = AtomicU64::new(DISK_CACHE_MAX_BYTES);
+
+pub fn set_disk_cache_max_bytes(max_bytes: u64) {
+    DISK_CACHE_MAX.store(max_bytes, Ordering::Relaxed);
+}
+
+pub fn evict_disk_cache_if_needed() {
+    let count = DISK_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if count % EVICTION_CHECK_INTERVAL != 0 {
+        return;
+    }
+    let max_bytes = DISK_CACHE_MAX.load(Ordering::Relaxed);
+    let dir = get_disk_cache_dir();
+    let current_size = crate::directory_size_bytes(dir).unwrap_or(0);
+    if current_size <= max_bytes {
+        return;
+    }
+    let target = (max_bytes as f64 * 0.8) as u64;
+    let excess = current_size.saturating_sub(target);
+    let mut files: Vec<(PathBuf, SystemTime)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Ok(metadata) = path.metadata() {
+                    if let Ok(mtime) = metadata.modified() {
+                        files.push((path, mtime));
+                    }
+                }
+            }
+        }
+    }
+    files.sort_by_key(|(_, mtime)| *mtime);
+
+    let mut removed = 0u64;
+    for (path, _) in &files {
+        if removed >= excess {
+            break;
+        }
+        if let Ok(metadata) = path.metadata() {
+            let size = metadata.len();
+            let _ = std::fs::remove_file(path);
+            removed = removed.saturating_add(size);
+        }
+    }
+    if removed > 0 {
+        tracing::info!("Evicted {:.1} MB from disk tile cache", removed as f64 / 1_048_576.0);
+    }
+}

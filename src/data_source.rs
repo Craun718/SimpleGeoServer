@@ -159,7 +159,6 @@ impl DataSource for RasterDataSource {
         let resampling = ResamplingMode::NearestNeighbor;
         let cache_key = crate::tile_cache::TileCacheKey::new_webp(&self.path, z, x, y, resampling);
 
-        // L2 check
         {
             let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
             if let Some(cached) = l2.get(&cache_key) {
@@ -167,7 +166,6 @@ impl DataSource for RasterDataSource {
                 return Ok(cached.clone());
             }
         }
-        // L3 check
         if let Some(cached) =
             crate::tile_cache::disk_cache_get(&self.path, z, x, y, resampling, true)
         {
@@ -178,27 +176,18 @@ impl DataSource for RasterDataSource {
         }
         crate::tile_cache::record_miss();
 
-        // Render via render farm (GPU/CPU → WebP) with block_on bridge
-        let farm = &crate::render_farm::RENDER_FARM;
-        let result = crate::render_farm::block_on(farm.render_tile(
-            self.path.clone(),
-            z,
-            x,
-            y,
-            vec![1, 2, 3],
-            None,
-            resampling,
-        ))
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let raster =
+            tile::get_raster(&self.path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let (webp_data, _rendered) = tile::render_raster_tile_webp(&raster, z, x, y, 256, &[1, 2, 3])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-        // Cache
-        crate::tile_cache::disk_cache_set(&self.path, z, x, y, resampling, true, &result);
+        crate::tile_cache::disk_cache_set(&self.path, z, x, y, resampling, true, &webp_data);
         {
             let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
-            l2.insert(cache_key, result.clone());
+            l2.insert(cache_key, webp_data.clone());
         }
 
-        Ok(result)
+        Ok(webp_data)
     }
 
     fn render_vector_tile(&self, _z: u32, _x: u32, _y: u32) -> DataSourceResult<Vec<u8>> {
