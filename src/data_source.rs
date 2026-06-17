@@ -3,7 +3,6 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use serde::Serialize;
 
-use crate::resample::ResamplingMode;
 use crate::tile;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -43,7 +42,13 @@ pub trait DataSource: Send + Sync {
         params: &crate::TileQueryParams,
     ) -> DataSourceResult<Vec<u8>>;
 
-    fn render_raster_tile_webp(&self, z: u32, x: u32, y: u32) -> DataSourceResult<Vec<u8>>;
+    fn render_raster_tile_webp(
+        &self,
+        z: u32,
+        x: u32,
+        y: u32,
+        params: &crate::TileQueryParams,
+    ) -> DataSourceResult<Vec<u8>>;
 
     fn render_vector_tile(&self, z: u32, x: u32, y: u32) -> DataSourceResult<Vec<u8>>;
 
@@ -154,10 +159,28 @@ impl DataSource for RasterDataSource {
 
         Ok(png_data)
     }
+    fn render_raster_tile_webp(
+        &self,
+        z: u32,
+        x: u32,
+        y: u32,
+        params: &crate::TileQueryParams,
+    ) -> DataSourceResult<Vec<u8>> {
+        let resampling = params
+            .resampling
+            .as_deref()
+            .map(crate::resample::ResamplingMode::from_str)
+            .unwrap_or(crate::resample::ResamplingMode::NearestNeighbor);
+        let bands = params.bands.clone().unwrap_or_else(|| vec![1, 2, 3]);
+        let _stretch = params.stretch.as_deref().map(|s| crate::resample::StretchConfig {
+            method: crate::resample::StretchMethod::from_str(s),
+            min_percent: params.min_percent,
+            max_percent: params.max_percent,
+            std_dev_factor: params.std_dev_factor,
+        });
 
-    fn render_raster_tile_webp(&self, z: u32, x: u32, y: u32) -> DataSourceResult<Vec<u8>> {
-        let resampling = ResamplingMode::NearestNeighbor;
-        let cache_key = crate::tile_cache::TileCacheKey::new_webp(&self.path, z, x, y, resampling);
+        let cache_key =
+            crate::tile_cache::TileCacheKey::new_webp(&self.path, z, x, y, resampling);
 
         {
             let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();
@@ -178,7 +201,7 @@ impl DataSource for RasterDataSource {
 
         let raster =
             tile::get_raster(&self.path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-        let (webp_data, _rendered) = tile::render_raster_tile_webp(&raster, z, x, y, 256, &[1, 2, 3])
+        let (webp_data, _rendered) = tile::render_raster_tile_webp(&raster, z, x, y, 256, &bands)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         crate::tile_cache::disk_cache_set(&self.path, z, x, y, resampling, true, &webp_data);
@@ -254,7 +277,13 @@ impl DataSource for VectorDataSource {
         ))
     }
 
-    fn render_raster_tile_webp(&self, _z: u32, _x: u32, _y: u32) -> DataSourceResult<Vec<u8>> {
+    fn render_raster_tile_webp(
+        &self,
+        _z: u32,
+        _x: u32,
+        _y: u32,
+        _params: &crate::TileQueryParams,
+    ) -> DataSourceResult<Vec<u8>> {
         Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "Vector source does not support raster tiles".to_string(),

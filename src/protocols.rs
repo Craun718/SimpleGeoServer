@@ -621,12 +621,7 @@ pub(crate) async fn wmts_get_tile(
         None => return (StatusCode::NOT_FOUND, "Layer not found").into_response(),
     };
 
-    let default_params = crate::TileQueryParams {
-        resampling: None,
-        stretch: None,
-        std_dev_factor: None,
-        bands: None,
-    };
+    let default_params = crate::TileQueryParams::default();
 
     match source.render_raster_tile(params.z, params.x, params.y, &default_params) {
         Ok(png_data) => ([(header::CONTENT_TYPE, "image/png")], png_data).into_response(),
@@ -821,12 +816,7 @@ pub(crate) async fn tms_get_tile(
         return (StatusCode::BAD_REQUEST, "Tile Y out of range").into_response();
     };
 
-    let default_params = crate::TileQueryParams {
-        resampling: None,
-        stretch: None,
-        std_dev_factor: None,
-        bands: None,
-    };
+    let default_params = crate::TileQueryParams::default();
 
     match source.render_raster_tile(params.z, params.x, xyz_y, &default_params) {
         Ok(png_data) => ([(header::CONTENT_TYPE, "image/png")], png_data).into_response(),

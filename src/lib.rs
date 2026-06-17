@@ -21,22 +21,50 @@ use utoipauto::utoipauto;
 
 use crate::registry::DataSourceRegistry;
 
+fn deserialize_bands<'de, D>(deserializer: D) -> Result<Option<Vec<u32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: Option<String> = Option::deserialize(deserializer)?;
+    Ok(s.map(|s| {
+        s.split(',')
+            .filter_map(|v| v.trim().parse().ok())
+            .collect()
+    }))
+}
+
 #[derive(Deserialize)]
 pub struct TileQueryParams {
     resampling: Option<String>,
     stretch: Option<String>,
     std_dev_factor: Option<f64>,
+    min_percent: Option<f64>,
+    max_percent: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_bands")]
     bands: Option<Vec<u32>>,
 }
 
-mod batch_render;
+impl Default for TileQueryParams {
+    fn default() -> Self {
+        Self {
+            resampling: None,
+            stretch: None,
+            std_dev_factor: None,
+            min_percent: None,
+            max_percent: None,
+            bands: None,
+        }
+    }
+}
+
+pub mod batch_render;
 pub mod config;
-pub(crate) mod data_source;
+pub mod data_source;
 #[cfg(feature = "gpu")]
 pub mod gpu_renderer;
-pub(crate) mod protocols;
+pub mod protocols;
 pub mod raster;
-mod registry;
+pub mod registry;
 pub mod render_farm;
 pub mod reproject;
 pub mod resample;
@@ -97,6 +125,31 @@ pub struct Cli {
 pub enum Commands {
     /// Generate a default config.yaml in the current directory
     Init,
+}
+
+/// Programmatic server configuration (replaces CLI args for embedded use)
+pub struct ServerConfig {
+    pub threads: u32,
+    pub cache_max_age: i32,
+    pub cors: bool,
+    pub gzip: bool,
+    pub no_dotfiles: bool,
+    pub l2_cache_mb: u64,
+    pub disk_cache_dir: Option<String>,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            threads: 4,
+            cache_max_age: 3600,
+            cors: true,
+            gzip: false,
+            no_dotfiles: false,
+            l2_cache_mb: 512,
+            disk_cache_dir: None,
+        }
+    }
 }
 
 async fn set_cache_header(
@@ -243,12 +296,13 @@ async fn get_vector_tile(
 async fn get_raster_tile_webp(
     registry: Arc<DataSourceRegistry>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
+    Query(params): Query<TileQueryParams>,
 ) -> Result<Response, (StatusCode, String)> {
     let source = registry.get(&filename).ok_or((
         StatusCode::NOT_FOUND,
         format!("Source not found: {}", filename),
     ))?;
-    let webp = source.render_raster_tile_webp(z, x, y)?;
+    let webp = source.render_raster_tile_webp(z, x, y, &params)?;
     Ok(([(header::CONTENT_TYPE, "image/webp")], webp).into_response())
 }
 
@@ -619,6 +673,211 @@ macro_rules! merge_opt {
 
 // ─── 服务器启动 ───
 
+/// Create a new empty DataSourceRegistry for programmatic use
+pub fn init_registry() -> Arc<DataSourceRegistry> {
+    Arc::new(DataSourceRegistry::new())
+}
+
+/// Build the full axum Router (without binding or serving).
+/// Useful for embedding in another application (e.g. Tauri).
+pub fn build_router(
+    registry: Arc<DataSourceRegistry>,
+    root: Arc<String>,
+    config: &ServerConfig,
+) -> Router {
+    let cache_arc = Arc::new(config.cache_max_age as i64);
+
+    let svc = ServeDir::new(root.as_str()).append_index_html_on_directories(true);
+
+    let mut app = Router::new().fallback_service(svc);
+
+    // ─── 健康检查 ───
+
+    app = app.route("/health", get(health));
+
+    // ─── Registry API ───
+
+    app = app.route(
+        "/api/sources",
+        get({
+            let reg = registry.clone();
+            move || list_sources(reg.clone())
+        }),
+    );
+
+    app = app.route(
+        "/api/geo-files",
+        get({
+            let reg = registry.clone();
+            move || list_geo_files(reg.clone())
+        }),
+    );
+
+    app = app.route(
+        "/api/mount",
+        post({
+            let reg = registry.clone();
+            let root = root.clone();
+            move |body| mount_source(reg.clone(), root.clone(), body)
+        }),
+    );
+
+    app = app.route(
+        "/api/unmount/{name}",
+        delete({
+            let reg = registry.clone();
+            move |path| unmount_source(reg.clone(), path)
+        }),
+    );
+
+    // ─── 切片服务路由 ───
+
+    app = app.route(
+        "/api/tiles/{filename}/info",
+        get({
+            let reg = registry.clone();
+            move |path| get_tile_info(reg.clone(), path)
+        }),
+    );
+
+    app = app.route(
+        "/api/tiles/{filename}/png/{z}/{x}/{y}",
+        get({
+            let reg = registry.clone();
+            move |path, query| get_raster_tile(reg.clone(), path, query)
+        }),
+    );
+
+    app = app.route(
+        "/api/tiles/{filename}/geojson/{z}/{x}/{y}",
+        get({
+            let reg = registry.clone();
+            move |path| get_vector_tile(reg.clone(), path)
+        }),
+    );
+
+    app = app.route(
+        "/api/tiles/{filename}/webp/{z}/{x}/{y}",
+        get({
+            let reg = registry.clone();
+            move |path, query| get_raster_tile_webp(reg.clone(), path, query)
+        }),
+    );
+
+    app = app.route(
+        "/api/batch-tiles",
+        post({
+            let root = root.clone();
+            move |body| batch_tiles(root.clone(), body)
+        }),
+    );
+
+    // ─── OGC 协议路由 ───
+
+    app = app.route(
+        "/ogc/wms",
+        get({
+            let reg = registry.clone();
+            move |headers, query| protocols::wms_handler(reg.clone(), headers, query)
+        }),
+    );
+
+    app = app.route(
+        "/ogc/wmts/1.0.0/WMTSCapabilities.xml",
+        get({
+            let reg = registry.clone();
+            move |headers: HeaderMap| protocols::wmts_capabilities(reg.clone(), headers)
+        }),
+    );
+
+    app = app.route(
+        "/ogc/wmts/1.0.0/{layer}/default/GoogleMapsCompatible/{z}/{x}/{y}",
+        get({
+            let reg = registry.clone();
+            move |path| protocols::wmts_get_tile(reg.clone(), path)
+        }),
+    );
+
+    app = app.route(
+        "/ogc/tms/1.0.0/",
+        get({
+            let reg = registry.clone();
+            move |headers: HeaderMap| protocols::tms_root(reg.clone(), headers)
+        }),
+    );
+
+    app = app.route(
+        "/ogc/tms/1.0.0/{layer}",
+        get({
+            let reg = registry.clone();
+            move |headers: HeaderMap, path: Path<String>| {
+                protocols::tms_layer(reg.clone(), headers, path)
+            }
+        }),
+    );
+
+    app = app.route(
+        "/ogc/tms/1.0.0/{layer}/{z}/{x}/{y}",
+        get({
+            let reg = registry.clone();
+            move |path| protocols::tms_get_tile(reg.clone(), path)
+        }),
+    );
+
+    app = app.route(
+        "/ogc/tilejson/{filename}",
+        get({
+            let reg = registry.clone();
+            move |headers: HeaderMap, path: Path<String>| {
+                protocols::tilejson(reg.clone(), headers, path)
+            }
+        }),
+    );
+
+    // ─── OpenAPI 文档 ───
+
+    let filenames: Vec<String> = registry.list_names();
+    let spec_value = build_dynamic_spec(&filenames);
+    if let Ok(json) = serde_json::to_string_pretty(&spec_value) {
+        if let Err(e) = std::fs::write("openapi.json", &json) {
+            tracing::warn!("Failed to write openapi.json: {}", e);
+        }
+    }
+
+    if let Some(paths) = spec_value.get("paths").and_then(|p| p.as_object()) {
+        let mut file_routes: Vec<&str> = paths.keys().map(|k| k.as_str()).collect();
+        file_routes.sort();
+        for route in &file_routes {
+            if *route != "/api/geo-files" {
+                tracing::info!("  {}", route);
+            }
+        }
+    }
+
+    app = app.merge(
+        SwaggerUi::new("/docs").external_url_unchecked("/api-docs/openapi.json", spec_value),
+    );
+
+    app = app.layer(middleware::from_fn(set_cache_header));
+    app = app.layer(Extension(cache_arc));
+
+    if config.no_dotfiles {
+        app = app.layer(middleware::from_fn(filter_dotfiles));
+    }
+
+    if config.cors {
+        app = app.layer(CorsLayer::permissive());
+    }
+
+    if config.gzip {
+        app = app.layer(CompressionLayer::new());
+    }
+
+    app = app.layer(TraceLayer::new_for_http());
+
+    app
+}
+
 pub fn run() {
     let cli = Cli::parse();
 
@@ -673,6 +932,16 @@ pub fn run() {
         512u64
     );
 
+    let server_config = ServerConfig {
+        threads,
+        cache_max_age,
+        cors,
+        gzip,
+        no_dotfiles,
+        l2_cache_mb,
+        disk_cache_dir: cache_cfg.and_then(|s| s.disk_dir.clone()),
+    };
+
     // Apply cache config before any tile operations
     tile_cache::set_l2_cache_size_mb(l2_cache_mb);
     if let Some(dir) = cache_cfg.and_then(|s| s.disk_dir.clone()) {
@@ -712,195 +981,7 @@ pub fn run() {
         .unwrap();
 
     rt.block_on(async move {
-        let svc = ServeDir::new(&root).append_index_html_on_directories(true);
-
-        let mut app = Router::new().fallback_service(svc);
-
-        // ─── 健康检查 ───
-
-        app = app.route("/health", get(health));
-
-        // ─── Registry API ───
-
-        app = app.route(
-            "/api/sources",
-            get({
-                let reg = registry.clone();
-                move || list_sources(reg.clone())
-            }),
-        );
-
-        // 向后兼容
-        app = app.route(
-            "/api/geo-files",
-            get({
-                let reg = registry.clone();
-                move || list_geo_files(reg.clone())
-            }),
-        );
-
-        app = app.route(
-            "/api/mount",
-            post({
-                let reg = registry.clone();
-                let root = root_arc.clone();
-                move |body| mount_source(reg.clone(), root.clone(), body)
-            }),
-        );
-
-        app = app.route(
-            "/api/unmount/{name}",
-            delete({
-                let reg = registry.clone();
-                move |path| unmount_source(reg.clone(), path)
-            }),
-        );
-
-        // ─── 切片服务路由 ───
-
-        app = app.route(
-            "/api/tiles/{filename}/info",
-            get({
-                let reg = registry.clone();
-                move |path| get_tile_info(reg.clone(), path)
-            }),
-        );
-
-        app = app.route(
-            "/api/tiles/{filename}/png/{z}/{x}/{y}",
-            get({
-                let reg = registry.clone();
-                move |path, query| get_raster_tile(reg.clone(), path, query)
-            }),
-        );
-
-        app = app.route(
-            "/api/tiles/{filename}/geojson/{z}/{x}/{y}",
-            get({
-                let reg = registry.clone();
-                move |path| get_vector_tile(reg.clone(), path)
-            }),
-        );
-
-        app = app.route(
-            "/api/tiles/{filename}/webp/{z}/{x}/{y}",
-            get({
-                let reg = registry.clone();
-                move |path| get_raster_tile_webp(reg.clone(), path)
-            }),
-        );
-
-        app = app.route(
-            "/api/batch-tiles",
-            post({
-                let root = root_arc.clone();
-                move |body| batch_tiles(root.clone(), body)
-            }),
-        );
-
-        // ─── OGC 协议路由 ───
-
-        app = app.route(
-            "/ogc/wms",
-            get({
-                let reg = registry.clone();
-                move |headers, query| protocols::wms_handler(reg.clone(), headers, query)
-            }),
-        );
-
-        app = app.route(
-            "/ogc/wmts/1.0.0/WMTSCapabilities.xml",
-            get({
-                let reg = registry.clone();
-                move |headers: HeaderMap| protocols::wmts_capabilities(reg.clone(), headers)
-            }),
-        );
-
-        app = app.route(
-            "/ogc/wmts/1.0.0/{layer}/default/GoogleMapsCompatible/{z}/{x}/{y}",
-            get({
-                let reg = registry.clone();
-                move |path| protocols::wmts_get_tile(reg.clone(), path)
-            }),
-        );
-
-        app = app.route(
-            "/ogc/tms/1.0.0/",
-            get({
-                let reg = registry.clone();
-                move |headers: HeaderMap| protocols::tms_root(reg.clone(), headers)
-            }),
-        );
-
-        app = app.route(
-            "/ogc/tms/1.0.0/{layer}",
-            get({
-                let reg = registry.clone();
-                move |headers: HeaderMap, path: Path<String>| {
-                    protocols::tms_layer(reg.clone(), headers, path)
-                }
-            }),
-        );
-
-        app = app.route(
-            "/ogc/tms/1.0.0/{layer}/{z}/{x}/{y}",
-            get({
-                let reg = registry.clone();
-                move |path| protocols::tms_get_tile(reg.clone(), path)
-            }),
-        );
-
-        app = app.route(
-            "/ogc/tilejson/{filename}",
-            get({
-                let reg = registry.clone();
-                move |headers: HeaderMap, path: Path<String>| {
-                    protocols::tilejson(reg.clone(), headers, path)
-                }
-            }),
-        );
-
-        // ─── OpenAPI 文档 ───
-
-        let filenames: Vec<String> = registry.list_names();
-        let spec_value = build_dynamic_spec(&filenames);
-        if let Ok(json) = serde_json::to_string_pretty(&spec_value) {
-            if let Err(e) = std::fs::write("openapi.json", &json) {
-                tracing::warn!("Failed to write openapi.json: {}", e);
-            }
-        }
-
-        if let Some(paths) = spec_value.get("paths").and_then(|p| p.as_object()) {
-            let mut file_routes: Vec<&str> = paths.keys().map(|k| k.as_str()).collect();
-            file_routes.sort();
-            for route in &file_routes {
-                if *route != "/api/geo-files" {
-                    tracing::info!("  {}", route);
-                }
-            }
-        }
-
-        app = app.merge(
-            SwaggerUi::new("/docs").external_url_unchecked("/api-docs/openapi.json", spec_value),
-        );
-
-        let cache_arc = Arc::new(cache_max_age as i64);
-        app = app.layer(middleware::from_fn(set_cache_header));
-        app = app.layer(Extension(cache_arc));
-
-        if no_dotfiles {
-            app = app.layer(middleware::from_fn(filter_dotfiles));
-        }
-
-        if cors {
-            app = app.layer(CorsLayer::permissive());
-        }
-
-        if gzip {
-            app = app.layer(CompressionLayer::new());
-        }
-
-        app = app.layer(TraceLayer::new_for_http());
+        let app = build_router(registry, root_arc, &server_config);
 
         let addr: SocketAddr = format!("{}:{}", address, port)
             .parse()
@@ -908,8 +989,6 @@ pub fn run() {
 
         tracing::info!("SimpleGeoServer started on http://{}", addr);
         tracing::info!("Serving files from {}", root);
-        tracing::info!("{} data source(s) mounted", registry.len());
-        tracing::info!("Geo tile API available at http://{}/api/geo-files", addr);
         tracing::info!("API documentation at http://{}/docs", addr);
 
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
