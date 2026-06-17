@@ -364,3 +364,37 @@ fn encode_webp(rgba: &[u8], size: usize) -> Result<Vec<u8>, String> {
     let webp = encoder.encode(90.0);
     Ok(webp.to_vec())
 }
+
+/// Bridges sync→async: polls a future to completion using a busy-wait loop.
+/// Used by DataSource to call the async render farm from sync trait methods.
+pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    let waker = noop_waker();
+    let mut context = std::task::Context::from_waker(&waker);
+    let mut pinned = std::pin::pin!(future);
+    loop {
+        match pinned.as_mut().poll(&mut context) {
+            std::task::Poll::Ready(val) => return val,
+            std::task::Poll::Pending => std::thread::yield_now(),
+        }
+    }
+}
+
+fn noop_waker() -> std::task::Waker {
+    let raw = std::task::RawWaker::new(
+        std::ptr::null(),
+        &std::task::RawWakerVTable::new(
+            |_| std::task::RawWaker::new(std::ptr::null(), &VTABLE),
+            |_| {},
+            |_| {},
+            |_| {},
+        ),
+    );
+    unsafe { std::task::Waker::from_raw(raw) }
+}
+
+const VTABLE: std::task::RawWakerVTable = std::task::RawWakerVTable::new(
+    |_| std::task::RawWaker::new(std::ptr::null(), &VTABLE),
+    |_| {},
+    |_| {},
+    |_| {},
+);
