@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
+use std::mem::size_of;
 use std::sync::{Arc, RwLock};
 
 use std::sync::LazyLock;
@@ -79,6 +80,33 @@ pub fn get_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
         cache.insert(path.to_string(), raster);
     }
     Ok(arc)
+}
+
+fn estimate_raster_size_bytes(raster: &CachedRaster) -> u64 {
+    let vec_bytes = |len: usize| -> u64 { (len as u64).saturating_mul(size_of::<f64>() as u64) };
+
+    let mut total = size_of::<CachedRaster>() as u64;
+    total = total.saturating_add(raster.file_path.capacity() as u64);
+    total = total.saturating_add(vec_bytes(raster.min_values.capacity()));
+    total = total.saturating_add(vec_bytes(raster.max_values.capacity()));
+    total = total.saturating_add(vec_bytes(raster.mean_values.capacity()));
+    total = total.saturating_add(vec_bytes(raster.std_dev_values.capacity()));
+    total = total.saturating_add((size_of::<IfdInfo>() * raster.ifds.capacity()) as u64);
+    total = total.saturating_add(raster.crs_type.capacity() as u64);
+    total = total.saturating_add((size_of::<usize>() as u64).saturating_mul(2));
+    total
+}
+
+pub fn raster_memory_cache_size_bytes() -> Result<u64, String> {
+    let cache = RASTER_CACHE
+        .read()
+        .map_err(|e| format!("Cache lock error: {}", e))?;
+
+    Ok(cache.iter().fold(0u64, |total, (path, raster)| {
+        total
+            .saturating_add(path.capacity() as u64)
+            .saturating_add(estimate_raster_size_bytes(raster.as_ref()))
+    }))
 }
 
 fn load_and_cache_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
