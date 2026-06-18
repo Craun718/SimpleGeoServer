@@ -39,7 +39,7 @@ shapefile = { version = "0.8", features = ["geo-types"] }
 wkt = "0.14"
 tiff = "0.11"
 tracing = "0.1"
-wgpu = { version = "22", optional = true }
+wgpu = { version = "29", optional = true }
 tracing-subscriber = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

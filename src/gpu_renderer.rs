@@ -308,7 +308,10 @@ impl GpuRenderer {
     async fn new() -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
+            flags: wgpu::InstanceFlags::default(),
+            backend_options: Default::default(),
+            memory_budget_thresholds: Default::default(),
+            display: None,
         });
 
         let adapter = instance
@@ -318,7 +321,7 @@ impl GpuRenderer {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or("No suitable GPU adapter found")?;
+            .map_err(|_| "No suitable GPU adapter found")?;
 
         let (device, queue) = adapter
             .request_device(
@@ -327,8 +330,9 @@ impl GpuRenderer {
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
                     memory_hints: wgpu::MemoryHints::default(),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    trace: wgpu::Trace::Off,
                 },
-                None,
             )
             .await
             .map_err(|e| format!("Failed to create GPU device: {e}"))?;
@@ -376,15 +380,15 @@ impl GpuRenderer {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Tile Render Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Tile Render Compute Pipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
@@ -561,7 +565,7 @@ impl GpuRenderer {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         match receiver.recv().map_err(|_| "Channel closed")? {
             Ok(()) => {
