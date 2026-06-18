@@ -352,12 +352,25 @@ pub fn known_crs_corners_to_wgs84(corners: &[(f64, f64); 4], crs: KnownCrs) -> O
     }
 }
 
+pub fn known_crs_extent_to_wgs84(extent: [f64; 4], crs: KnownCrs) -> Option<[f64; 4]> {
+    let corners = [
+        (extent[0], extent[1]),
+        (extent[2], extent[1]),
+        (extent[0], extent[3]),
+        (extent[2], extent[3]),
+    ];
+    known_crs_corners_to_wgs84(&corners, crs)
+}
+
 pub fn extent_to_wgs84(
-    geo_transform: &[f64; 6],
+    geo_transform: &[f64],
     width: u32,
     height: u32,
     geo_key: &GeoKeyInfo,
 ) -> Option<[f64; 4]> {
+    if geo_transform.len() < 6 {
+        return None;
+    }
     let corners = model_corners(geo_transform, width, height);
 
     if geo_key.model_type == Some(2) {
@@ -449,7 +462,7 @@ fn proj4_from_tm_params(geo_key: &GeoKeyInfo) -> Option<String> {
     ))
 }
 
-fn model_corners(gt: &[f64; 6], width: u32, height: u32) -> [(f64, f64); 4] {
+fn model_corners(gt: &[f64], width: u32, height: u32) -> [(f64, f64); 4] {
     let (xo, xr, _, yo, _, yr) = (gt[0], gt[1], gt[2], gt[3], gt[4], gt[5]);
     [
         (xo, yo),

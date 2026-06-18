@@ -21,8 +21,10 @@ path = "src/lib.rs"
 name = "simple-geo-server"
 path = "src/main.rs"
 
+[build-dependencies]
+serde_json = "1"
+
 [features]
-default = []
 gpu = ["wgpu", "bytemuck"]
 
 [dependencies]
