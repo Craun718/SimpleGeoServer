@@ -78,7 +78,16 @@ pub fn read_raster_region(
         }
     }
 
-    read_raster_region_from_decoder(&mut decoder, ifd, col_off, row_off, width, height, bands, step)
+    read_raster_region_from_decoder(
+        &mut decoder,
+        ifd,
+        col_off,
+        row_off,
+        width,
+        height,
+        bands,
+        step,
+    )
 }
 
 pub fn read_raster_region_from_decoder(

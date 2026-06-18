@@ -688,8 +688,7 @@ pub fn load_and_cache_raster_with_progress(
         })
         .collect();
 
-    let percentile_bounds: Vec<(f64, f64)> =
-        percentile_lo.into_iter().zip(percentile_hi).collect();
+    let percentile_bounds: Vec<(f64, f64)> = percentile_lo.into_iter().zip(percentile_hi).collect();
 
     on_progress(RasterLoadProgress::StatsComplete {
         min_values: min_values.clone(),

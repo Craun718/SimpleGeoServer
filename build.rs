@@ -13,7 +13,10 @@ fn main() {
     let json_path = match workspace_root {
         Some(dir) => dir.join("public").join("crslist.json"),
         None => {
-            println!("cargo:warning=Could not resolve workspace root from {}", manifest_dir);
+            println!(
+                "cargo:warning=Could not resolve workspace root from {}",
+                manifest_dir
+            );
             return;
         }
     };

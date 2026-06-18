@@ -353,6 +353,9 @@ pub fn evict_disk_cache_if_needed() {
         }
     }
     if removed > 0 {
-        tracing::info!("Evicted {:.1} MB from disk tile cache", removed as f64 / 1_048_576.0);
+        tracing::info!(
+            "Evicted {:.1} MB from disk tile cache",
+            removed as f64 / 1_048_576.0
+        );
     }
 }

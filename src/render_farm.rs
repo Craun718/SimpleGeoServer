@@ -84,10 +84,13 @@ impl RenderFarm {
                 entry.senders.push(sender);
                 false
             } else {
-                pending.insert(key, PendingEntry {
-                    senders: vec![sender],
-                    _submit_time: submit_time,
-                });
+                pending.insert(
+                    key,
+                    PendingEntry {
+                        senders: vec![sender],
+                        _submit_time: submit_time,
+                    },
+                );
                 true
             }
         };
@@ -96,8 +99,12 @@ impl RenderFarm {
             let priority = (z as u64) << 40 | (x.abs_diff(0) as u64) << 20 | (y.abs_diff(0) as u64);
             let job = TileJob {
                 path,
-                z, x, y,
-                bands, stretch, resampling,
+                z,
+                x,
+                y,
+                bands,
+                stretch,
+                resampling,
                 priority,
                 _submit_time: submit_time,
             };

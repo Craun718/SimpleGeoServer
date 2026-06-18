@@ -172,15 +172,17 @@ impl DataSource for RasterDataSource {
             .map(crate::resample::ResamplingMode::from_str)
             .unwrap_or(crate::resample::ResamplingMode::NearestNeighbor);
         let bands = params.bands.clone().unwrap_or_else(|| vec![1, 2, 3]);
-        let _stretch = params.stretch.as_deref().map(|s| crate::resample::StretchConfig {
-            method: crate::resample::StretchMethod::from_str(s),
-            min_percent: params.min_percent,
-            max_percent: params.max_percent,
-            std_dev_factor: params.std_dev_factor,
-        });
+        let _stretch = params
+            .stretch
+            .as_deref()
+            .map(|s| crate::resample::StretchConfig {
+                method: crate::resample::StretchMethod::from_str(s),
+                min_percent: params.min_percent,
+                max_percent: params.max_percent,
+                std_dev_factor: params.std_dev_factor,
+            });
 
-        let cache_key =
-            crate::tile_cache::TileCacheKey::new_webp(&self.path, z, x, y, resampling);
+        let cache_key = crate::tile_cache::TileCacheKey::new_webp(&self.path, z, x, y, resampling);
 
         {
             let mut l2 = crate::tile_cache::L2_CACHE.lock().unwrap();

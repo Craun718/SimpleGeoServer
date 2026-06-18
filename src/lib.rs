@@ -26,11 +26,7 @@ where
     D: serde::Deserializer<'de>,
 {
     let s: Option<String> = Option::deserialize(deserializer)?;
-    Ok(s.map(|s| {
-        s.split(',')
-            .filter_map(|v| v.trim().parse().ok())
-            .collect()
-    }))
+    Ok(s.map(|s| s.split(',').filter_map(|v| v.trim().parse().ok()).collect()))
 }
 
 #[derive(Deserialize)]
