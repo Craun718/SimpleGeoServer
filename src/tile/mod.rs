@@ -6,7 +6,10 @@ pub(crate) mod tile_math;
 pub(crate) mod types;
 pub(crate) mod vector_tile;
 
-pub use raster_cache::{get_raster, raster_memory_cache_size_bytes};
+pub use raster_cache::{
+    clear_raster_memory_cache, get_raster, load_and_cache_raster_with_progress,
+    open_raster_metadata, raster_memory_cache_size_bytes, RasterFileInfo, RasterLoadProgress,
+};
 pub use raster_load::{read_raster_region, read_raster_region_from_decoder, select_ifd_for_zoom};
 pub use raster_ovr::{generate_ovr, parse_ovr_ifd_offsets};
 pub(crate) use raster_render::render_raster_tile_cpu_rgba;
