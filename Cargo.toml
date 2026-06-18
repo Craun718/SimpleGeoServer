@@ -29,14 +29,14 @@ gpu = ["wgpu", "bytemuck"]
 bytemuck = { version = "1", optional = true }
 clap = { version = "4", features = ["derive"] }
 crs-definitions = "0.5"
-geodesy = "0.13"
+geodesy = { version = "0.15", default-features = false }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
-tower-http = { version = "0.6", features = ["fs", "cors", "compression-gzip", "trace"] }
+tower-http = { version = "0.7", features = ["fs", "cors", "compression-gzip", "trace"] }
 geojson = "1"
-kml = { version = "0.5", features = ["geo-types", "zip"] }
+kml = { version = "0.13", features = ["geo-types", "zip"] }
 shapefile = { version = "0.8", features = ["geo-types"] }
-wkt = "0.11"
+wkt = "0.14"
 tiff = "0.11"
 tracing = "0.1"
 wgpu = { version = "22", optional = true }

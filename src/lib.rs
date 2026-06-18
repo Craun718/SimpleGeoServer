@@ -9,7 +9,7 @@ use axum::{
 };
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::{
@@ -125,6 +125,11 @@ pub struct Cli {
 pub enum Commands {
     /// Generate a default config.yaml in the current directory
     Init,
+    /// Export OpenAPI spec to a JSON file
+    ExportOpenapi {
+        #[arg(short, long, default_value = "openapi.json")]
+        output: PathBuf,
+    },
 }
 
 /// Programmatic server configuration (replaces CLI args for embedded use)
@@ -651,6 +656,35 @@ fn scan_and_auto_mount(root: &str, registry: &DataSourceRegistry) {
     }
 }
 
+fn build_registry_from_config(
+    file_config: &config::AppConfig,
+    root: &str,
+) -> Arc<DataSourceRegistry> {
+    let registry = Arc::new(DataSourceRegistry::new());
+
+    if let Some(sources) = &file_config.sources {
+        for src in sources {
+            let ext = std::path::Path::new(&src.path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase())
+                .unwrap_or_default();
+            if let Some(source) =
+                data_source::create_file_source(src.name.clone(), src.path.clone(), &ext)
+            {
+                if let Err(e) = registry.mount(src.name.clone(), source) {
+                    tracing::warn!("Failed to mount '{}' from config: {}", src.name, e);
+                }
+            } else {
+                tracing::warn!("Unsupported file type for source '{}': .{}", src.name, ext);
+            }
+        }
+    }
+
+    scan_and_auto_mount(root, &registry);
+    registry
+}
+
 fn load_config_file(path: &Option<std::path::PathBuf>) -> Option<config::AppConfig> {
     let p = path.as_ref()?;
     match config::load_config(p) {
@@ -838,11 +872,6 @@ pub fn build_router(
 
     let filenames: Vec<String> = registry.list_names();
     let spec_value = build_dynamic_spec(&filenames);
-    if let Ok(json) = serde_json::to_string_pretty(&spec_value) {
-        if let Err(e) = std::fs::write("openapi.json", &json) {
-            tracing::warn!("Failed to write openapi.json: {}", e);
-        }
-    }
 
     if let Some(paths) = spec_value.get("paths").and_then(|p| p.as_object()) {
         let mut file_routes: Vec<&str> = paths.keys().map(|k| k.as_str()).collect();
@@ -881,18 +910,53 @@ pub fn build_router(
 pub fn run() {
     let cli = Cli::parse();
 
-    if matches!(cli.command, Some(Commands::Init)) {
-        let path = PathBuf::from("config.yaml");
-        match config::generate_default_config(&path) {
-            Ok(()) => {
-                println!("Default config written to {}", path.display());
+    match &cli.command {
+        Some(Commands::Init) => {
+            let path = PathBuf::from("config.yaml");
+            match config::generate_default_config(&path) {
+                Ok(()) => {
+                    println!("Default config written to {}", path.display());
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
             }
-            Err(e) => {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
+            return;
         }
-        return;
+        Some(Commands::ExportOpenapi { output }) => {
+            tracing_subscriber::fmt::init();
+
+            let file_config = load_config_file(&cli.config).unwrap_or_default();
+            let server_cfg = file_config.server.as_ref();
+            let root_from_cli = merge_opt!(
+                cli.root.clone(),
+                server_cfg.and_then(|s| s.root.clone()),
+                ".".to_string()
+            );
+            let root = cli.dir.clone().unwrap_or(root_from_cli);
+            let registry = build_registry_from_config(&file_config, &root);
+            let filenames = registry.list_names();
+            let spec_value = build_dynamic_spec(&filenames);
+
+            match serde_json::to_string_pretty(&spec_value) {
+                Ok(json) => match std::fs::write(output, json) {
+                    Ok(()) => {
+                        println!("OpenAPI spec written to {}", output.display());
+                    }
+                    Err(e) => {
+                        eprintln!("Error writing {}: {}", output.display(), e);
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error serializing OpenAPI spec: {e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        None => {}
     }
 
     tracing_subscriber::fmt::init();
@@ -948,29 +1012,7 @@ pub fn run() {
         tile_cache::set_disk_cache_dir(&dir);
     }
 
-    let registry = Arc::new(DataSourceRegistry::new());
-
-    // Mount sources from config file
-    if let Some(sources) = &file_config.sources {
-        for src in sources {
-            let ext = std::path::Path::new(&src.path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase())
-                .unwrap_or_default();
-            if let Some(source) =
-                data_source::create_file_source(src.name.clone(), src.path.clone(), &ext)
-            {
-                if let Err(e) = registry.mount(src.name.clone(), source) {
-                    tracing::warn!("Failed to mount '{}' from config: {}", src.name, e);
-                }
-            } else {
-                tracing::warn!("Unsupported file type for source '{}': .{}", src.name, ext);
-            }
-        }
-    }
-
-    scan_and_auto_mount(&root, &registry);
+    let registry = build_registry_from_config(&file_config, &root);
 
     let root_arc = Arc::new(root.clone());
 
@@ -987,9 +1029,32 @@ pub fn run() {
             .parse()
             .expect("Invalid address or port");
 
-        tracing::info!("SimpleGeoServer started on http://{}", addr);
+        let access_urls: Vec<String> = match addr.ip() {
+            IpAddr::V4(ip) if ip == Ipv4Addr::UNSPECIFIED => vec![
+                format!("http://127.0.0.1:{}", addr.port()),
+                format!("http://localhost:{}", addr.port()),
+            ],
+            IpAddr::V6(ip) if ip == Ipv6Addr::UNSPECIFIED => vec![
+                format!("http://127.0.0.1:{}", addr.port()),
+                format!("http://localhost:{}", addr.port()),
+                format!("http://[::1]:{}", addr.port()),
+            ],
+            IpAddr::V4(ip) if ip == Ipv4Addr::LOCALHOST => {
+                vec![format!("http://127.0.0.1:{}", addr.port())]
+            }
+            IpAddr::V6(ip) if ip == Ipv6Addr::LOCALHOST => {
+                vec![format!("http://[::1]:{}", addr.port())]
+            }
+            IpAddr::V4(ip) => vec![format!("http://{}:{}", ip, addr.port())],
+            IpAddr::V6(ip) => vec![format!("http://[{}]:{}", ip, addr.port())],
+        };
+
+        tracing::info!("SimpleGeoServer listening on {}", addr);
         tracing::info!("Serving files from {}", root);
-        tracing::info!("API documentation at http://{}/docs", addr);
+        for url in &access_urls {
+            tracing::info!("Open in browser: {}", url);
+            tracing::info!("API documentation: {}/docs", url);
+        }
 
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         axum::serve(listener, app).await.unwrap();

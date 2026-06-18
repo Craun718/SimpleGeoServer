@@ -2,50 +2,70 @@
 
 [English](README.md) | 中文
 
-一个基于 Rust 的简单 HTTP 静态文件服务器，内置地理空间切片服务，支持栅格（GeoTIFF）和矢量（GeoJSON）地图瓦片。
+SimpleGeoServer 是一个基于 Rust 的 HTTP 服务器，用于同时提供静态文件和地理空间数据服务。它支持栅格与矢量瓦片、OGC 兼容接口，也可以既作为 CLI 程序运行，也可作为 crate 嵌入使用。
 
 ## 特性
 
-- 静态文件服务，自动显示 `index.html`
-- GeoTIFF 栅格瓦片渲染（PNG）
-- GeoJSON 矢量瓦片服务
-- 自动扫描并列出地理空间文件
-- 可自定义缓存、CORS、Gzip 压缩
-- 可过滤点文件（dotfiles）
-- 动态 OpenAPI 文档 + Swagger UI
-- 多线程异步运行时
+- 静态文件服务，自动返回 `index.html`
+- 从 GeoTIFF 渲染 PNG 栅格瓦片
+- 以 GeoJSON 形式提供矢量瓦片
+- OGC 接口支持：WMS 1.3.0、WMTS 1.0.0、TMS 1.0.0、TileJSON 3.0.0
+- 自动扫描地理空间文件，并提供数据源挂载注册表接口
+- 提供批量瓦片渲染接口，适合离线或多瓦片任务
+- 内置 Swagger UI 和动态 OpenAPI 文档
+- 支持 YAML 配置，并允许 CLI 参数覆盖
+- 提供内存 L2 瓦片缓存，并可选开启磁盘缓存目录
 
-## 安装
+## 支持格式
+
+| 格式 | 类型 | 说明 |
+|------|------|------|
+| `.tif` / `.tiff` | 栅格 | GeoTIFF，支持多波段影像 |
+| `.geojson` / `.json` | 矢量 | GeoJSON 要素集合 |
+| `.shp` | 矢量 | Shapefile 几何数据 |
+| `.wkt` | 矢量 | WKT 文本几何 |
+| `.kml` / `.kmz` | 矢量 | KML 与压缩后的 KMZ |
+
+## 构建
 
 ```bash
-git clone https://github.com/Craun718/SimpleGeoServer.git
-cd SimpleGeoServer
 cargo build --release
 ```
 
-## 用法
+## CLI 用法
 
 ```bash
-simple-geo-server [选项] [目录]
+simple-geo-server [OPTIONS] [DIR]
+simple-geo-server init
+simple-geo-server export-openapi --output openapi.json
 ```
 
-`[目录]` 为要服务的根目录，默认为当前目录（等价于 `http-server .`）。
+`[DIR]` 表示服务根目录。如果同时提供 `[DIR]` 和 `--root`，则以 `[DIR]` 为准。如果使用 `--config`，则 CLI 参数会覆盖 YAML 文件中的对应配置。
 
 ### 选项
 
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
-| `-p, --port <PORT>` | `8080` | 监听端口 |
-| `-a, --address <ADDRESS>` | `0.0.0.0` | 监听地址 |
-| `-d, --root <ROOT>` | `.` | 服务根目录（同位置参数 `[目录]`） |
+| `-c, --config <PATH>` | - | 从 YAML 配置文件加载设置 |
 | `-t, --threads <THREADS>` | `4` | 工作线程数 |
-| `--cache <CACHE>` | `3600` | Cache-Control max-age（秒），负数禁用缓存 |
-| `--cors` | - | 启用宽松 CORS |
-| `-g, --gzip` | - | 启用 Gzip 压缩 |
-| `--no-dotfiles` | - | 拒绝以点开头的文件/路径 |
-| `-f, --full-data` | - | 完整数据模式 |
-| `--log-format <FORMAT>` | `default` | 日志格式 |
-| `-h, --help` | - | 打印帮助信息 |
+| `-f, --full-data <BOOL>` | - | CLI 暴露的完整数据模式开关 |
+| `-p, --port <PORT>` | `8080` | 监听端口 |
+| `-a, --address <ADDRESS>` | `0.0.0.0` | 绑定地址 |
+| `-d, --root <ROOT>` | `.` | 服务根目录 |
+| `[DIR]` | `.` | 位置参数形式的根目录 |
+| `--cache-max-age <SECONDS>` | `3600` | `Cache-Control` 的 `max-age` 秒数；负数表示不发送缓存头 |
+| `--cors <BOOL>` | `false` | 是否启用宽松 CORS |
+| `-g, --gzip <BOOL>` | `false` | 是否启用 Gzip 压缩 |
+| `--no-dotfiles <BOOL>` | `false` | 是否拒绝访问点文件和以 `.` 开头的路径 |
+| `--log-format <FORMAT>` | `default` | 日志输出格式 |
+| `--l2-cache-mb <SIZE_MB>` | `512` | 内存 L2 瓦片缓存大小（MB） |
+
+### 子命令
+
+| 子命令 | 说明 |
+|--------|------|
+| `init` | 在当前目录生成默认 `config.yaml` |
+| `export-openapi` | 将当前动态 OpenAPI 文档导出为 JSON |
 
 ### 示例
 
@@ -53,80 +73,122 @@ simple-geo-server [选项] [目录]
 # 服务当前目录
 simple-geo-server
 
-# 服务指定目录
-simple-geo-server /path/to/geodata
+# 在自定义端口上服务指定目录
+simple-geo-server -p 3000 ./data
 
-# 指定端口和根目录
-simple-geo-server -p 3000 -d ./maps
+# 使用 YAML 配置文件
+simple-geo-server --config ./config.yaml
 
-# 启用 CORS 和 Gzip
-simple-geo-server --cors -g
+# 生成默认配置模板
+simple-geo-server init
+
+# 导出解析后的 OpenAPI 文档
+simple-geo-server export-openapi --output ./openapi.json
 ```
 
-## API 接口
+## 配置文件
 
-### 文件列表
+可以通过 `simple-geo-server init` 生成初始配置。当前默认模板如下：
 
-```
-GET /api/geo-files
-```
-
-返回根目录下所有支持的地理空间文件列表（含元数据）。
-
-### 文件信息
-
-```
-GET /api/tiles/{filename}/info
-```
-
-返回指定文件的瓦片信息（坐标系、范围、波段等）。
-
-### 栅格瓦片
-
-```
-GET /api/tiles/{filename}/png/{z}/{x}/{y}
-```
-
-渲染并返回 GeoTIFF 的 PNG 瓦片。仅支持 `.tif` / `.tiff` 文件。
-
-### 矢量瓦片
-
-```
-GET /api/tiles/{filename}/geojson/{z}/{x}/{y}
+```yaml
+server:
+  port: 8080
+  address: 0.0.0.0
+  threads: 4
+  root: .
+  cache_max_age: 3600
+  cors: false
+  gzip: false
+  no_dotfiles: false
+  log_format: default
+sources:
+  - name: example-raster
+    path: ./data/raster.tif
+  - name: example-vector
+    path: ./data/vector.geojson
+cache:
+  l2_size_mb: 512
+  disk_dir: ./cache/tiles
 ```
 
-返回 GeoJSON FeatureCollection 格式的矢量瓦片。仅支持 `.geojson` / `.json` 文件。
+`sources` 用于在启动时预挂载具名数据集。`cache.disk_dir` 会在内存缓存之外启用磁盘瓦片缓存目录。
 
-### 交互文档
+## 核心 API
 
-启动后访问 `http://localhost:8080/docs` 查看 Swagger UI。
+### 注册表接口
 
-## 坐标系
-
-- 瓦片网格始终使用 **Web Mercator (EPSG:3857)** — 所有瓦片均以此投影渲染和发布。
-- 源数据坐标系不同时会**自动重投影**到 EPSG:3857（无需手动转换）。
-- 支持的源坐标系：WGS84 (EPSG:4326)、Web Mercator (EPSG:3857)、UTM WGS84（1–60 带，北/南半球）。
-- 矢量瓦片：GeoJSON 要素先重投影到 WGS84 进行边界框过滤，再以原始 CRS 返回。
-- `/api/tiles/{filename}/info` 接口返回源文件的原始 CRS 及 WGS84 范围。
-
-## 支持的切片协议
-
-| 协议 | 端点 | 瓦片方案 | 输出格式 |
-|------|------|----------|----------|
-| 内部 REST API (XYZ) | `/api/tiles/{filename}/png/{z}/{x}/{y}` | Slippy Map (XYZ) | PNG / GeoJSON |
-| OGC WMS 1.3.0 | `/ogc/wms?SERVICE=WMS&...` | 任意 BBOX | PNG / GeoJSON |
-| OGC WMTS 1.0.0 | `/ogc/wmts/1.0.0/{layer}/default/GoogleMapsCompatible/{z}/{x}/{y}` | GoogleMapsCompatible (XYZ) | PNG |
-| OGC TMS 1.0.0 | `/ogc/tms/1.0.0/{layer}/{z}/{x}/{y}` | TMS（Y 轴翻转） | PNG |
-| TileJSON 3.0.0 | `/ogc/tilejson/{filename}` | XYZ 元数据 | JSON |
-
-所有 OGC 切片协议实现在 src/protocols.rs 中。WMS 和 WMTS 分别遵循 OGC 1.3.0 和 1.0.0 标准，TMS 遵循 OSGeo TMS 1.0.0 规范，TileJSON 以标准 3.0.0 格式提供瓦片元数据。
-
-## 支持的文件格式
-
-| 格式 | 类型 | 说明 |
+| 方法 | 路径 | 说明 |
 |------|------|------|
-| `.tif` / `.tiff` | 栅格 | GeoTIFF 遥感影像，支持多波段 |
-| `.geojson` / `.json` | 矢量 | GeoJSON 要素集合 |
+| `GET` | `/api/sources` | 列出当前已挂载的数据源 |
+| `POST` | `/api/mount` | 动态挂载一个数据源 |
+| `DELETE` | `/api/unmount/{name}` | 卸载指定数据源 |
+
+`POST /api/mount` 请求体：
+
+```json
+{
+  "name": "example-raster",
+  "path": "./data/raster.tif"
+}
+```
+
+### 文件发现接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/geo-files` | 返回所有受支持的地理空间文件及其元数据 |
+| `GET` | `/api/tiles/{filename}/info` | 返回数据源元信息，例如 CRS 和范围 |
+
+### 瓦片接口
+
+| 方法 | 路径 | 输出 |
+|------|------|------|
+| `GET` | `/api/tiles/{filename}/png/{z}/{x}/{y}` | PNG 栅格瓦片 |
+| `GET` | `/api/tiles/{filename}/geojson/{z}/{x}/{y}` | GeoJSON 矢量瓦片 |
+| `POST` | `/api/batch-tiles` | 批量渲染结果的 JSON 数组 |
+
+`POST /api/batch-tiles` 请求体：
+
+```json
+{
+  "filename": "./data/raster.tif",
+  "tiles": [
+    { "z": 4, "x": 12, "y": 6 },
+    { "z": 4, "x": 13, "y": 6 }
+  ],
+  "resampling": "bilinear",
+  "stretch": "percentile",
+  "bands": [1, 2, 3]
+}
+```
+
+`resampling` 目前支持 `nearest`、`bilinear`、`bicubic`、`lanczos`。`stretch` 目前支持 `min-max`、`percentile`、`standard-deviation`。
+
+### API 文档
+
+- Swagger UI: `http://localhost:8080/docs`
+- OpenAPI JSON: `http://localhost:8080/api-docs/openapi.json`
+
+生成的 OpenAPI 文档是动态的，会按当前可用数据源展开具体的文件级瓦片路径。
+
+## OGC 与瓦片元数据接口
+
+| 协议 | 路径 | 说明 |
+|------|------|------|
+| WMS 1.3.0 | `/ogc/wms` | 支持标准 `GetCapabilities`、`GetMap` 等请求 |
+| WMTS 1.0.0 | `/ogc/wmts/1.0.0/WMTSCapabilities.xml` | 能力描述文档 |
+| WMTS 瓦片 | `/ogc/wmts/1.0.0/{layer}/default/GoogleMapsCompatible/{z}/{x}/{y}` | GoogleMapsCompatible 矩阵集 |
+| TMS 1.0.0 根接口 | `/ogc/tms/1.0.0/` | 服务列表 |
+| TMS 1.0.0 图层接口 | `/ogc/tms/1.0.0/{layer}` | 图层元信息 |
+| TMS 瓦片 | `/ogc/tms/1.0.0/{layer}/{z}/{x}/{y}` | TMS 规范的 Y 轴翻转路径 |
+| TileJSON 3.0.0 | `/ogc/tilejson/{filename}` | 提供客户端可消费的瓦片元数据 |
+
+## 坐标参考系
+
+- 服务器瓦片网格使用 Web Mercator（`EPSG:3857`）。
+- 渲染时会按需对源数据进行重投影。
+- `/api/tiles/{filename}/info` 会返回原始 CRS 和范围等元数据。
+- 矢量瓦片接口输出 GeoJSON，OGC 接口则以各自协议要求的形式暴露相同数据。
 
 ## 许可证
 
