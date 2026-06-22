@@ -3,28 +3,32 @@ use std::io::Write;
 use std::path::Path;
 
 fn main() {
-    // Determine the path to crslist.json (relative to workspace root)
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    // crates/simple-geo-server/ -> src-tauri/ -> program/
-    let workspace_root = Path::new(&manifest_dir)
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent());
-    let json_path = match workspace_root {
-        Some(dir) => dir.join("public").join("crslist.json"),
+    let manifest = Path::new(&manifest_dir);
+
+    // Try multiple locations for crslist.json:
+    // 1. Bundled alongside Cargo.toml (standalone repo)
+    // 2. Within a data/ directory (standalone repo)
+    // 3. Up 3 levels (when used as workspace member of parent project)
+    let candidates = [
+        manifest.join("crslist.json"),
+        manifest.join("data").join("crslist.json"),
+        manifest.join("..").join("..").join("..").join("public").join("crslist.json"),
+    ];
+
+    let json_path = candidates.iter().find(|p| p.exists());
+
+    let json_path = match json_path {
+        Some(p) => p.clone(),
         None => {
-            println!(
-                "cargo:warning=Could not resolve workspace root from {}",
-                manifest_dir
-            );
+            println!("cargo:warning=crslist.json not found — CRS name lookup will be unavailable");
+            let out_dir = std::env::var("OUT_DIR").unwrap();
+            let dest = Path::new(&out_dir).join("crs_names.rs");
+            let mut f = fs::File::create(&dest).unwrap();
+            writeln!(f, "static CRS_NAME_TABLE: &[(u16, &str)] = &[];").unwrap();
             return;
         }
     };
-
-    if !json_path.exists() {
-        println!("cargo:warning=crslist.json not found at {:?}", json_path);
-        return;
-    }
 
     let content = fs::read_to_string(&json_path).expect("read crslist.json");
     let parsed: serde_json::Value = serde_json::from_str(&content).expect("parse crslist.json");

@@ -64,9 +64,7 @@ pub fn compute_stretch_bounds(
         Some(StretchMethod::Percentile) => {
             let cached = raster.percentile_bounds.lock().unwrap().clone();
             cached.unwrap_or_else(|| {
-                (0..bands)
-                    .map(|b| (raster.min_values[b], raster.max_values[b]))
-                    .collect()
+                (0..bands).map(|b| (raster.min_values[b], raster.max_values[b])).collect()
             })
         }
         Some(StretchMethod::StdDev) => {
@@ -79,9 +77,7 @@ pub fn compute_stretch_bounds(
                 })
                 .collect()
         }
-        _ => (0..bands)
-            .map(|b| (raster.min_values[b], raster.max_values[b]))
-            .collect(),
+        _ => (0..bands).map(|b| (raster.min_values[b], raster.max_values[b])).collect(),
     }
 }
 
@@ -198,9 +194,5 @@ pub fn sample_lanczos3(
             sum += weight * data[(py as usize * width + px as usize) * bands + band];
         }
     }
-    if weight_sum.abs() > f64::EPSILON {
-        sum / weight_sum
-    } else {
-        f64::NAN
-    }
+    if weight_sum.abs() > f64::EPSILON { sum / weight_sum } else { f64::NAN }
 }

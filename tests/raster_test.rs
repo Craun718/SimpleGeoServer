@@ -15,12 +15,7 @@ fn lnglat_to_tile(lng: f64, lat: f64, zoom: u32) -> (u32, u32) {
 
 #[test]
 fn test_outside_tile_returns_transparent_png() {
-    let files = [
-        "bahamas_rgb.tif",
-        "co_elevation_roi.tif",
-        "landsat.tif",
-        "landsat7.tif",
-    ];
+    let files = ["bahamas_rgb.tif", "co_elevation_roi.tif", "landsat.tif", "landsat7.tif"];
 
     for file in &files {
         let path = data_path(file);
@@ -60,12 +55,7 @@ fn test_outside_tile_returns_transparent_png() {
 
 #[test]
 fn test_inside_tile_has_rendered_pixels() {
-    let files = [
-        "bahamas_rgb.tif",
-        "co_elevation_roi.tif",
-        "landsat.tif",
-        "landsat7.tif",
-    ];
+    let files = ["bahamas_rgb.tif", "co_elevation_roi.tif", "landsat.tif", "landsat7.tif"];
 
     for file in &files {
         let path = data_path(file);

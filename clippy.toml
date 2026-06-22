@@ -1,0 +1,14 @@
+# Extra strictness on top of -D warnings.
+# This file is intentionally minimal — most rules are enforced via
+# prek's clippy hook, which passes --no-deps -- -D warnings.
+
+msrv = "1.88"
+
+allow-unwrap-in-tests = false
+doc-valid-idents = [
+  "CRS",
+  "EPSG",
+  "GeoJSON",
+  "WebGPU",
+  "WGS84",
+]

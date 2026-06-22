@@ -22,12 +22,7 @@ pub struct RasterBlockConfig {
 
 impl Default for RasterBlockConfig {
     fn default() -> Self {
-        Self {
-            block_width: 512,
-            block_height: 512,
-            overlap: 0,
-            step: 1,
-        }
+        Self { block_width: 512, block_height: 512, overlap: 0, step: 1 }
     }
 }
 
@@ -62,15 +57,7 @@ impl RasterBlockIterator {
     pub fn new(ifd: IfdInfo, config: RasterBlockConfig, bands: usize) -> Self {
         let blocks_x = (ifd.width + config.block_width - 1) / config.block_width;
         let blocks_y = (ifd.height + config.block_height - 1) / config.block_height;
-        Self {
-            ifd,
-            config,
-            blocks_x,
-            blocks_y,
-            current_block: 0,
-            bands,
-            decoder: None,
-        }
+        Self { ifd, config, blocks_x, blocks_y, current_block: 0, bands, decoder: None }
     }
 
     pub fn next_block(&mut self) -> Option<Result<RasterBlock, String>> {

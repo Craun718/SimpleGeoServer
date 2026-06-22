@@ -13,9 +13,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tower_http::{
-    compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer,
-};
+use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use utoipauto::utoipauto;
@@ -70,10 +68,7 @@ pub mod tile;
 pub mod tile_cache;
 
 #[derive(Parser)]
-#[command(
-    name = "SimpleGeoServer",
-    about = "A simple HTTP static file server with tile serving"
-)]
+#[command(name = "SimpleGeoServer", about = "A simple HTTP static file server with tile serving")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -166,10 +161,8 @@ async fn set_cache_header(
 ) -> Response {
     let mut res = next.run(req).await;
     if *cache >= 0 && (res.status().is_success() || res.status() == StatusCode::NOT_MODIFIED) {
-        res.headers_mut().insert(
-            header::CACHE_CONTROL,
-            format!("public, max-age={}", cache).parse().unwrap(),
-        );
+        res.headers_mut()
+            .insert(header::CACHE_CONTROL, format!("public, max-age={}", cache).parse().unwrap());
     }
     res
 }
@@ -234,10 +227,9 @@ async fn get_tile_info(
     registry: Arc<DataSourceRegistry>,
     Path(filename): Path<String>,
 ) -> Result<Json<tile::TileInfo>, (StatusCode, String)> {
-    let source = registry.get(&filename).ok_or((
-        StatusCode::NOT_FOUND,
-        format!("Source not found: {}", filename),
-    ))?;
+    let source = registry
+        .get(&filename)
+        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
     Ok(Json(source.info().tile_info))
 }
 
@@ -262,10 +254,9 @@ async fn get_raster_tile(
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
     Query(params): Query<TileQueryParams>,
 ) -> Result<Response, (StatusCode, String)> {
-    let source = registry.get(&filename).ok_or((
-        StatusCode::NOT_FOUND,
-        format!("Source not found: {}", filename),
-    ))?;
+    let source = registry
+        .get(&filename)
+        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
     let png = source.render_raster_tile(z, x, y, &params)?;
     Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
 }
@@ -290,10 +281,9 @@ async fn get_vector_tile(
     registry: Arc<DataSourceRegistry>,
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
 ) -> Result<Response, (StatusCode, String)> {
-    let source = registry.get(&filename).ok_or((
-        StatusCode::NOT_FOUND,
-        format!("Source not found: {}", filename),
-    ))?;
+    let source = registry
+        .get(&filename)
+        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
     let geojson = source.render_vector_tile(z, x, y)?;
     Ok(([(header::CONTENT_TYPE, "application/geo+json")], geojson).into_response())
 }
@@ -305,10 +295,9 @@ async fn get_raster_tile_webp(
     Path((filename, z, x, y)): Path<(String, u32, u32, u32)>,
     Query(params): Query<TileQueryParams>,
 ) -> Result<Response, (StatusCode, String)> {
-    let source = registry.get(&filename).ok_or((
-        StatusCode::NOT_FOUND,
-        format!("Source not found: {}", filename),
-    ))?;
+    let source = registry
+        .get(&filename)
+        .ok_or((StatusCode::NOT_FOUND, format!("Source not found: {}", filename)))?;
     let webp = source.render_raster_tile_webp(z, x, y, &params)?;
     Ok(([(header::CONTENT_TYPE, "image/webp")], webp).into_response())
 }
@@ -329,20 +318,13 @@ async fn mount_source(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let filepath = validate_path(root.as_str(), &allowed_paths, &req.path)?;
     let path_str = filepath.to_string_lossy().to_string();
-    let ext = filepath
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .unwrap_or_default();
+    let ext =
+        filepath.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
 
-    let source = data_source::create_file_source(req.name.clone(), path_str, &ext).ok_or((
-        StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        format!("Unsupported file type: .{}", ext),
-    ))?;
+    let source = data_source::create_file_source(req.name.clone(), path_str, &ext)
+        .ok_or((StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("Unsupported file type: .{}", ext)))?;
 
-    registry
-        .mount(req.name.clone(), source)
-        .map_err(|e| (StatusCode::CONFLICT, e))?;
+    registry.mount(req.name.clone(), source).map_err(|e| (StatusCode::CONFLICT, e))?;
 
     Ok(Json(serde_json::json!({"status": "ok", "name": req.name})))
 }
@@ -351,9 +333,7 @@ async fn unmount_source(
     registry: Arc<DataSourceRegistry>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    registry
-        .unmount(&name)
-        .map_err(|e| (StatusCode::NOT_FOUND, e))?;
+    registry.unmount(&name).map_err(|e| (StatusCode::NOT_FOUND, e))?;
     Ok(Json(serde_json::json!({"status": "ok", "name": name})))
 }
 
@@ -451,10 +431,7 @@ pub fn directory_size_bytes(path: &std::path::Path) -> Result<u64, String> {
             if ft.is_dir() {
                 total += directory_size_bytes(&entry.path())?;
             } else {
-                total += entry
-                    .metadata()
-                    .map_err(|e| format!("Metadata: {e}"))?
-                    .len();
+                total += entry.metadata().map_err(|e| format!("Metadata: {e}"))?.len();
             }
         }
     }
@@ -484,27 +461,18 @@ pub fn validate_path(
         let filepath = std::path::Path::new(&base).join(filename);
         if filepath.exists() {
             let base_canonical = std::path::Path::new(&base).canonicalize().map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Invalid base directory".into(),
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, "Invalid base directory".into())
             })?;
-            let file_canonical = filepath.canonicalize().map_err(|_| {
-                (
-                    StatusCode::NOT_FOUND,
-                    format!("File not found: {}", filename),
-                )
-            })?;
+            let file_canonical = filepath
+                .canonicalize()
+                .map_err(|_| (StatusCode::NOT_FOUND, format!("File not found: {}", filename)))?;
             if file_canonical.starts_with(&base_canonical) {
                 return Ok(file_canonical);
             }
         }
     }
 
-    Err((
-        StatusCode::NOT_FOUND,
-        format!("File not found: {}", filename),
-    ))
+    Err((StatusCode::NOT_FOUND, format!("File not found: {}", filename)))
 }
 
 pub fn is_raster_ext(ext: &str) -> bool {
@@ -524,11 +492,8 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
     let mut spec: serde_json::Value =
         serde_json::to_value(ApiDoc::openapi()).expect("Failed to serialize ApiDoc");
 
-    let file_list_md = geo_files
-        .iter()
-        .map(|f| format!("- `{}`", f))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let file_list_md =
+        geo_files.iter().map(|f| format!("- `{}`", f)).collect::<Vec<_>>().join("\n");
     let description = format!(
         "Geospatial file server with raster and vector tile serving.\n\n\
          ### Available Geo Files ({})\n\n{}",
@@ -539,10 +504,7 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
     if let Some(info) = spec.get_mut("info") {
         info["description"] = serde_json::Value::String(description);
         info["x-geo-files"] = serde_json::Value::Array(
-            geo_files
-                .iter()
-                .map(|f| serde_json::Value::String(f.clone()))
-                .collect(),
+            geo_files.iter().map(|f| serde_json::Value::String(f.clone())).collect(),
         );
     }
 
@@ -555,11 +517,8 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
         return spec;
     };
 
-    let template_paths: Vec<String> = paths_obj
-        .keys()
-        .filter(|k| k.contains("{filename}"))
-        .cloned()
-        .collect();
+    let template_paths: Vec<String> =
+        paths_obj.keys().filter(|k| k.contains("{filename}")).cloned().collect();
 
     let mut concrete_paths: Vec<(String, serde_json::Value)> = Vec::new();
 
@@ -599,10 +558,8 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
                 }
 
                 // Set unique operationId
-                let base_op_id = get_op
-                    .get("operationId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("operation");
+                let base_op_id =
+                    get_op.get("operationId").and_then(|v| v.as_str()).unwrap_or("operation");
                 get_op["operationId"] =
                     serde_json::Value::String(make_operation_id(base_op_id, filename));
 
@@ -799,14 +756,10 @@ pub fn build_router(
     let allowed_paths = Arc::new(config.allowed_paths.clone());
 
     let all_dirs: Arc<Vec<String>> = Arc::new(
-        std::iter::once(root.as_str().to_string())
-            .chain(config.allowed_paths.clone())
-            .collect(),
+        std::iter::once(root.as_str().to_string()).chain(config.allowed_paths.clone()).collect(),
     );
 
-    let mut app = Router::new()
-        .fallback(fallback_handler)
-        .layer(Extension(all_dirs));
+    let mut app = Router::new().fallback(fallback_handler).layer(Extension(all_dirs));
 
     // ─── 健康检查 ───
 
@@ -1060,39 +1013,19 @@ pub fn run() {
 
     let threads = merge_opt!(cli.threads, server_cfg.and_then(|s| s.threads), 4u32);
     let port = merge_opt!(cli.port, server_cfg.and_then(|s| s.port), 8080u16);
-    let address = merge_opt!(
-        cli.address,
-        server_cfg.and_then(|s| s.address.clone()),
-        "0.0.0.0".to_string()
-    );
-    let root_from_cli = merge_opt!(
-        cli.root,
-        server_cfg.and_then(|s| s.root.clone()),
-        ".".to_string()
-    );
+    let address =
+        merge_opt!(cli.address, server_cfg.and_then(|s| s.address.clone()), "0.0.0.0".to_string());
+    let root_from_cli =
+        merge_opt!(cli.root, server_cfg.and_then(|s| s.root.clone()), ".".to_string());
     let root = cli.dir.clone().unwrap_or(root_from_cli);
-    let cache_max_age = merge_opt!(
-        cli.cache_max_age,
-        server_cfg.and_then(|s| s.cache_max_age),
-        3600i32
-    );
+    let cache_max_age =
+        merge_opt!(cli.cache_max_age, server_cfg.and_then(|s| s.cache_max_age), 3600i32);
     let cors = merge_opt!(cli.cors, server_cfg.and_then(|s| s.cors), false);
     let gzip = merge_opt!(cli.gzip, server_cfg.and_then(|s| s.gzip), false);
-    let no_dotfiles = merge_opt!(
-        cli.no_dotfiles,
-        server_cfg.and_then(|s| s.no_dotfiles),
-        false
-    );
-    let l2_cache_mb = merge_opt!(
-        cli.l2_cache_mb,
-        cache_cfg.and_then(|s| s.l2_size_mb),
-        512u64
-    );
-    let allowed_paths = merge_opt!(
-        cli.allow_path,
-        server_cfg.and_then(|s| s.allowed_paths.clone()),
-        vec![]
-    );
+    let no_dotfiles = merge_opt!(cli.no_dotfiles, server_cfg.and_then(|s| s.no_dotfiles), false);
+    let l2_cache_mb = merge_opt!(cli.l2_cache_mb, cache_cfg.and_then(|s| s.l2_size_mb), 512u64);
+    let allowed_paths =
+        merge_opt!(cli.allow_path, server_cfg.and_then(|s| s.allowed_paths.clone()), vec![]);
 
     let server_config = ServerConfig {
         threads,
@@ -1126,9 +1059,8 @@ pub fn run() {
     rt.block_on(async move {
         let app = build_router(registry, root_arc, &server_config);
 
-        let addr: SocketAddr = format!("{}:{}", address, port)
-            .parse()
-            .expect("Invalid address or port");
+        let addr: SocketAddr =
+            format!("{}:{}", address, port).parse().expect("Invalid address or port");
 
         let access_urls: Vec<String> = match addr.ip() {
             IpAddr::V4(ip) if ip == Ipv4Addr::UNSPECIFIED => vec![
@@ -1161,5 +1093,3 @@ pub fn run() {
         axum::serve(listener, app).await.unwrap();
     });
 }
-
-

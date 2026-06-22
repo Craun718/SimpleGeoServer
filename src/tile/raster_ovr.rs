@@ -89,11 +89,7 @@ pub fn parse_ovr_ifd_offsets(
             } else {
                 u32::from_be_bytes(next_buf)
             };
-            current_offset = if next_off != 0 {
-                Some(next_off as u64)
-            } else {
-                None
-            };
+            current_offset = if next_off != 0 { Some(next_off as u64) } else { None };
             continue;
         }
 
@@ -138,11 +134,7 @@ pub fn parse_ovr_ifd_offsets(
         } else {
             u32::from_be_bytes(next_buf)
         };
-        current_offset = if next_off != 0 {
-            Some(next_off as u64)
-        } else {
-            None
-        };
+        current_offset = if next_off != 0 { Some(next_off as u64) } else { None };
     }
 
     Ok(ifds)
@@ -209,13 +201,10 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to create decoder: {}", e))?
         .with_limits(Limits::unlimited());
 
-    let (width, height) = decoder
-        .dimensions()
-        .map_err(|e| format!("Failed to read dimensions: {}", e))?;
+    let (width, height) =
+        decoder.dimensions().map_err(|e| format!("Failed to read dimensions: {}", e))?;
 
-    let decoded = decoder
-        .read_image()
-        .map_err(|e| format!("Failed to read image: {}", e))?;
+    let decoded = decoder.read_image().map_err(|e| format!("Failed to read image: {}", e))?;
 
     let f64_data = crate::raster::decode_result_to_f64_vec(&decoded);
     let total_pixels = width as usize * height as usize;
@@ -242,10 +231,7 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
     let all_bands = bands;
 
     if bands > 4 {
-        return Err(format!(
-            "Cannot generate .ovr for {} bands (max supported: 4)",
-            bands
-        ));
+        return Err(format!("Cannot generate .ovr for {} bands (max supported: 4)", bands));
     }
 
     loop {
@@ -356,12 +342,8 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
                 1 => write_level!(colortype::Gray32Float, f32),
                 2 => {
                     let gray: Vec<f32> = downsampled.iter().step_by(2).map(|v| *v as f32).collect();
-                    let extra: Vec<f32> = downsampled
-                        .iter()
-                        .skip(1)
-                        .step_by(2)
-                        .map(|v| *v as f32)
-                        .collect();
+                    let extra: Vec<f32> =
+                        downsampled.iter().skip(1).step_by(2).map(|v| *v as f32).collect();
                     let mut interleaved = Vec::with_capacity(gray.len() + extra.len());
                     for i in 0..gray.len() {
                         interleaved.push(gray[i]);
