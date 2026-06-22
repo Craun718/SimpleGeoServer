@@ -57,3 +57,6 @@ utoipauto = "0.2"
 quick-xml = { version = "0.40", features = ["serialize"] }
 tempfile = "3"
 webp = "0.3"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

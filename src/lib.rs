@@ -1057,3 +1057,85 @@ pub fn run() {
         axum::serve(listener, app).await.unwrap();
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn setup() -> (TempDir, std::path::PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("allowed.tif");
+        std::fs::write(&file_path, b"dummy").unwrap();
+        (dir, file_path)
+    }
+
+    #[test]
+    fn test_validate_path_rejects_parent_dir() {
+        let (dir, _) = setup();
+        let root = dir.path().to_str().unwrap();
+        let result = validate_path(root, "../etc/passwd");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "Path traversal detected");
+    }
+
+    #[test]
+    fn test_validate_path_rejects_absolute_path() {
+        let (dir, _) = setup();
+        let root = dir.path().to_str().unwrap();
+        let result = validate_path(root, "/etc/passwd");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "Absolute path not allowed");
+    }
+
+    #[test]
+    fn test_validate_path_rejects_nonexistent_file() {
+        let (dir, _) = setup();
+        let root = dir.path().to_str().unwrap();
+        let result = validate_path(root, "nonexistent.tif");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.0, StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_validate_path_accepts_valid_file() {
+        let (dir, file_path) = setup();
+        let root = dir.path().to_str().unwrap();
+        let filename = file_path.file_name().unwrap().to_str().unwrap();
+        let result = validate_path(root, filename);
+        assert!(result.is_ok());
+        let canonical = result.unwrap();
+        assert!(canonical.starts_with(dir.path().canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn test_validate_path_rejects_deep_traversal() {
+        let (dir, _) = setup();
+        let root = dir.path().to_str().unwrap();
+        let result = validate_path(root, "subdir/../../etc/passwd");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "Path traversal detected");
+    }
+
+    #[test]
+    fn test_validate_path_accepts_subdir_valid_file() {
+        let (dir, _) = setup();
+        let subdir = dir.path().join("nested");
+        std::fs::create_dir(&subdir).unwrap();
+        let file_path = subdir.join("data.tif");
+        std::fs::write(&file_path, b"dummy").unwrap();
+
+        let root = dir.path().to_str().unwrap();
+        let result = validate_path(root, "nested/data.tif");
+        assert!(result.is_ok());
+    }
+
+
+}
