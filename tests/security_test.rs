@@ -3,7 +3,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use simple_geo_server::{build_router, init_registry, ServerConfig};
+use simple_geo_server::{build_router, init_registry, validate_path, ServerConfig};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -540,4 +540,110 @@ async fn test_allowed_path_traversal_mount_still_rejected() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+// ─── validate_path unit tests ───
+
+fn setup() -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let file_path = dir.path().join("allowed.tif");
+    std::fs::write(&file_path, b"dummy").unwrap();
+    (dir, file_path)
+}
+
+#[test]
+fn test_validate_path_rejects_parent_dir() {
+    let (dir, _) = setup();
+    let root = dir.path().to_str().unwrap();
+    let result = validate_path(root, &[], "../etc/passwd");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert_eq!(err.1, "Path traversal detected");
+}
+
+#[test]
+fn test_validate_path_rejects_absolute_path() {
+    let (dir, _) = setup();
+    let root = dir.path().to_str().unwrap();
+    let result = validate_path(root, &[], "/etc/passwd");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert_eq!(err.1, "Absolute path not allowed");
+}
+
+#[test]
+fn test_validate_path_rejects_nonexistent_file() {
+    let (dir, _) = setup();
+    let root = dir.path().to_str().unwrap();
+    let result = validate_path(root, &[], "nonexistent.tif");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn test_validate_path_accepts_valid_file() {
+    let (dir, file_path) = setup();
+    let root = dir.path().to_str().unwrap();
+    let filename = file_path.file_name().unwrap().to_str().unwrap();
+    let result = validate_path(root, &[], filename);
+    assert!(result.is_ok());
+    let canonical = result.unwrap();
+    assert!(canonical.starts_with(dir.path().canonicalize().unwrap()));
+}
+
+#[test]
+fn test_validate_path_rejects_deep_traversal() {
+    let (dir, _) = setup();
+    let root = dir.path().to_str().unwrap();
+    let result = validate_path(root, &[], "subdir/../../etc/passwd");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert_eq!(err.1, "Path traversal detected");
+}
+
+#[test]
+fn test_validate_path_accepts_subdir_valid_file() {
+    let (dir, _) = setup();
+    let subdir = dir.path().join("nested");
+    std::fs::create_dir(&subdir).unwrap();
+    let file_path = subdir.join("data.tif");
+    std::fs::write(&file_path, b"dummy").unwrap();
+
+    let root = dir.path().to_str().unwrap();
+    let result = validate_path(root, &[], "nested/data.tif");
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_validate_path_accepts_allowed_path_file() {
+    let (dir, _) = setup();
+    let outer_dir = TempDir::new().unwrap();
+    let outer_file = outer_dir.path().join("external.tif");
+    std::fs::write(&outer_file, b"dummy").unwrap();
+
+    let root = dir.path().to_str().unwrap();
+    let allowed = vec![outer_dir.path().to_string_lossy().to_string()];
+    let filename = outer_file.file_name().unwrap().to_str().unwrap();
+    let result = validate_path(root, &allowed, filename);
+    assert!(result.is_ok());
+    let canonical = result.unwrap();
+    assert!(canonical.starts_with(&outer_dir.path().canonicalize().unwrap()));
+}
+
+#[test]
+fn test_validate_path_rejects_outside_allowed_paths() {
+    let (dir, _) = setup();
+    let outer_dir = TempDir::new().unwrap();
+    let outer_file = outer_dir.path().join("external.tif");
+    std::fs::write(&outer_file, b"dummy").unwrap();
+
+    let root = dir.path().to_str().unwrap();
+    // empty allowed_paths — should not find the outer file
+    let filename = outer_file.file_name().unwrap().to_str().unwrap();
+    let result = validate_path(root, &[], filename);
+    assert!(result.is_err());
 }
