@@ -23,7 +23,10 @@ fn setup_server(with_dotfile_filter: bool) -> (TempDir, axum::Router) {
 
     let registry = init_registry();
     let root = Arc::new(dir.path().to_str().unwrap().to_string());
-    let config = ServerConfig { no_dotfiles: with_dotfile_filter, ..Default::default() };
+    let config = ServerConfig {
+        no_dotfiles: with_dotfile_filter,
+        ..Default::default()
+    };
     let app = build_router(registry, root, &config);
     (dir, app)
 }
@@ -34,7 +37,12 @@ fn setup_server(with_dotfile_filter: bool) -> (TempDir, axum::Router) {
 async fn test_serve_dir_serves_normal_file() {
     let (_dir, app) = setup_server(false);
     let res = app
-        .oneshot(Request::builder().uri("/welcome.txt").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/welcome.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -46,7 +54,12 @@ async fn test_serve_dir_serves_normal_file() {
 async fn test_serve_dir_rejects_parent_dir_traversal() {
     let (_dir, app) = setup_server(false);
     let res = app
-        .oneshot(Request::builder().uri("/../etc/passwd").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/../etc/passwd")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     // ServeDir in tower-http returns 400 for paths with `..` segments
@@ -57,7 +70,12 @@ async fn test_serve_dir_rejects_parent_dir_traversal() {
 async fn test_serve_dir_rejects_url_encoded_traversal() {
     let (_dir, app) = setup_server(false);
     let res = app
-        .oneshot(Request::builder().uri("/%2e%2e/etc/passwd").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/%2e%2e/etc/passwd")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert!(res.status().is_client_error());
@@ -67,7 +85,12 @@ async fn test_serve_dir_rejects_url_encoded_traversal() {
 async fn test_serve_dir_rejects_deep_traversal() {
     let (_dir, app) = setup_server(false);
     let res = app
-        .oneshot(Request::builder().uri("/subdir/../../etc/passwd").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/subdir/../../etc/passwd")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert!(res.status().is_client_error());
@@ -78,8 +101,10 @@ async fn test_serve_dir_rejects_deep_traversal() {
 #[tokio::test]
 async fn test_dotfile_filter_blocks_dotfiles() {
     let (_dir, app) = setup_server(true);
-    let res =
-        app.oneshot(Request::builder().uri("/.env").body(Body::empty()).unwrap()).await.unwrap();
+    let res = app
+        .oneshot(Request::builder().uri("/.env").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
 
@@ -87,7 +112,12 @@ async fn test_dotfile_filter_blocks_dotfiles() {
 async fn test_dotfile_filter_allows_normal_files() {
     let (_dir, app) = setup_server(true);
     let res = app
-        .oneshot(Request::builder().uri("/welcome.txt").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/welcome.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -96,8 +126,10 @@ async fn test_dotfile_filter_allows_normal_files() {
 #[tokio::test]
 async fn test_dotfile_filter_disabled_serves_dotfiles() {
     let (_dir, app) = setup_server(false);
-    let res =
-        app.oneshot(Request::builder().uri("/.env").body(Body::empty()).unwrap()).await.unwrap();
+    let res = app
+        .oneshot(Request::builder().uri("/.env").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
     // `.env` exists in the temp dir; without the filter it should be served
     assert_eq!(res.status(), StatusCode::OK);
 }
@@ -159,7 +191,10 @@ async fn test_tile_info_falls_to_serve_dir_on_traversal() {
     let (_dir, app) = setup_server(false);
     let res = app
         .oneshot(
-            Request::builder().uri("/api/tiles/../../etc/passwd/info").body(Body::empty()).unwrap(),
+            Request::builder()
+                .uri("/api/tiles/../../etc/passwd/info")
+                .body(Body::empty())
+                .unwrap(),
         )
         .await
         .unwrap();
@@ -189,7 +224,12 @@ async fn test_tile_png_falls_to_serve_dir_on_traversal() {
 async fn test_tile_info_encoded_traversal_rejected_by_registry() {
     let (_dir, app) = setup_server(false);
     let res = app
-        .oneshot(Request::builder().uri("/api/tiles/%2e%2e/info").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/tiles/%2e%2e/info")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
@@ -199,7 +239,12 @@ async fn test_tile_info_encoded_traversal_rejected_by_registry() {
 async fn test_tile_png_encoded_traversal_rejected_by_registry() {
     let (_dir, app) = setup_server(false);
     let res = app
-        .oneshot(Request::builder().uri("/api/tiles/%2e%2e/png/0/0/0").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/tiles/%2e%2e/png/0/0/0")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
@@ -242,7 +287,10 @@ async fn test_tilejson_traversal_falls_to_serve_dir() {
     let (_dir, app) = setup_server(false);
     let res = app
         .oneshot(
-            Request::builder().uri("/ogc/tilejson/../../etc/passwd").body(Body::empty()).unwrap(),
+            Request::builder()
+                .uri("/ogc/tilejson/../../etc/passwd")
+                .body(Body::empty())
+                .unwrap(),
         )
         .await
         .unwrap();
@@ -255,7 +303,12 @@ async fn test_tilejson_traversal_falls_to_serve_dir() {
 async fn test_ogc_tilejson_encoded_traversal_rejected_by_registry() {
     let (_dir, app) = setup_server(false);
     let res = app
-        .oneshot(Request::builder().uri("/ogc/tilejson/%2e%2e").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/ogc/tilejson/%2e%2e")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
@@ -273,11 +326,21 @@ async fn test_serve_dir_serves_file_from_allowed_path() {
         allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
         ..Default::default()
     };
-    let app =
-        build_router(init_registry(), Arc::new(root.path().to_str().unwrap().to_string()), &config);
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
 
-    let res =
-        app.oneshot(Request::builder().uri("/ext.txt").body(Body::empty()).unwrap()).await.unwrap();
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/ext.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 }
 
@@ -292,16 +355,27 @@ async fn test_serve_dir_root_takes_priority() {
         allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
         ..Default::default()
     };
-    let app =
-        build_router(init_registry(), Arc::new(root.path().to_str().unwrap().to_string()), &config);
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
 
     let res = app
-        .oneshot(Request::builder().uri("/conflict.txt").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/conflict.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let body = res.into_body().collect().await.unwrap().to_bytes();
-    assert!(body.starts_with(b"root-"), "expected root priority, got: {body:?}");
+    assert!(
+        body.starts_with(b"root-"),
+        "expected root priority, got: {body:?}"
+    );
 }
 
 #[tokio::test]
@@ -314,11 +388,19 @@ async fn test_serve_dir_returns_404_for_missing_file() {
         allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
         ..Default::default()
     };
-    let app =
-        build_router(init_registry(), Arc::new(root.path().to_str().unwrap().to_string()), &config);
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
 
     let res = app
-        .oneshot(Request::builder().uri("/nonexistent.txt").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/nonexistent.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
@@ -333,11 +415,19 @@ async fn test_serve_dir_traversal_still_blocked_with_allowed_paths() {
         allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
         ..Default::default()
     };
-    let app =
-        build_router(init_registry(), Arc::new(root.path().to_str().unwrap().to_string()), &config);
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
 
     let res = app
-        .oneshot(Request::builder().uri("/../welcome.txt").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/../welcome.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert!(res.status().is_client_error());
@@ -355,8 +445,11 @@ async fn test_mount_accepts_file_in_allowed_path() {
         allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
         ..Default::default()
     };
-    let app =
-        build_router(init_registry(), Arc::new(root.path().to_str().unwrap().to_string()), &config);
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
 
     let res = app
         .oneshot(
@@ -422,8 +515,11 @@ async fn test_allowed_path_traversal_mount_still_rejected() {
         allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
         ..Default::default()
     };
-    let app =
-        build_router(init_registry(), Arc::new(root.path().to_str().unwrap().to_string()), &config);
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
 
     let res = app
         .oneshot(

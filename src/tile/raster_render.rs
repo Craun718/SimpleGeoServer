@@ -49,7 +49,12 @@ pub fn render_raster_tile_ex(
     let nc_span_x = nc_se.0 - nc_sw.0;
     let nc_span_y = nc_nw.1 - nc_sw.1;
 
-    let corners_3857 = [(min_x, max_y), (max_x, max_y), (min_x, min_y), (max_x, min_y)];
+    let corners_3857 = [
+        (min_x, max_y),
+        (max_x, max_y),
+        (min_x, min_y),
+        (max_x, min_y),
+    ];
     let mut pixel_coords: Vec<(i64, i64)> = Vec::with_capacity(4);
     for &(wx, wy) in &corners_3857 {
         let lng = mercator_to_lng(wx);
@@ -85,10 +90,32 @@ pub fn render_raster_tile_ex(
     }
 
     let safe_padding = 10i64;
-    let min_col = pixel_coords.iter().map(|(c, _)| c).min().copied().unwrap_or(0).max(0);
-    let max_col = pixel_coords.iter().map(|(c, _)| c).max().copied().unwrap_or(0);
-    let min_row = pixel_coords.iter().map(|(_, r)| r).min().copied().unwrap_or(0).max(0);
-    let max_row = pixel_coords.iter().map(|(_, r)| r).max().copied().unwrap_or(0);
+    let min_col = pixel_coords
+        .iter()
+        .map(|(c, _)| c)
+        .min()
+        .copied()
+        .unwrap_or(0)
+        .max(0);
+    let max_col = pixel_coords
+        .iter()
+        .map(|(c, _)| c)
+        .max()
+        .copied()
+        .unwrap_or(0);
+    let min_row = pixel_coords
+        .iter()
+        .map(|(_, r)| r)
+        .min()
+        .copied()
+        .unwrap_or(0)
+        .max(0);
+    let max_row = pixel_coords
+        .iter()
+        .map(|(_, r)| r)
+        .max()
+        .copied()
+        .unwrap_or(0);
 
     let col_off = (min_col - safe_padding).max(0) as u32;
     let row_off = (min_row - safe_padding).max(0) as u32;
@@ -226,7 +253,11 @@ pub fn render_raster_tile_ex(
                         let dr = (local_row / step_f) as usize;
                         if dc < read_w_u && dr < read_h as usize {
                             let idx = (dr * read_w_u + dc) * raster.bands + band;
-                            if idx < region_data.len() { region_data[idx] } else { f64::NAN }
+                            if idx < region_data.len() {
+                                region_data[idx]
+                            } else {
+                                f64::NAN
+                            }
                         } else {
                             f64::NAN
                         }
@@ -357,7 +388,11 @@ pub fn render_map_bbox(
 
     let estimated_z = if range_x > 0.0 {
         let z_f = (width as f64 * (2.0 * super::tile_math::C) / (range_x * 256.0)).log2();
-        if z_f.is_finite() && z_f > 0.0 { (z_f.round() as u32).min(22) } else { 0 }
+        if z_f.is_finite() && z_f > 0.0 {
+            (z_f.round() as u32).min(22)
+        } else {
+            0
+        }
     } else {
         0
     };
@@ -380,7 +415,12 @@ pub fn render_map_bbox(
     let nc_span_x = nc_se.0 - nc_sw.0;
     let nc_span_y = nc_nw.1 - nc_sw.1;
 
-    let corners_3857 = [(min_x, max_y), (max_x, max_y), (min_x, min_y), (max_x, min_y)];
+    let corners_3857 = [
+        (min_x, max_y),
+        (max_x, max_y),
+        (min_x, min_y),
+        (max_x, min_y),
+    ];
     let mut pixel_coords: Vec<(i64, i64)> = Vec::with_capacity(4);
     for &(wx, wy) in &corners_3857 {
         let lng = mercator_to_lng(wx);
@@ -416,10 +456,32 @@ pub fn render_map_bbox(
     }
 
     let safe_padding = 10i64;
-    let min_col = pixel_coords.iter().map(|(c, _)| c).min().copied().unwrap_or(0).max(0);
-    let max_col = pixel_coords.iter().map(|(c, _)| c).max().copied().unwrap_or(0);
-    let min_row = pixel_coords.iter().map(|(_, r)| r).min().copied().unwrap_or(0).max(0);
-    let max_row = pixel_coords.iter().map(|(_, r)| r).max().copied().unwrap_or(0);
+    let min_col = pixel_coords
+        .iter()
+        .map(|(c, _)| c)
+        .min()
+        .copied()
+        .unwrap_or(0)
+        .max(0);
+    let max_col = pixel_coords
+        .iter()
+        .map(|(c, _)| c)
+        .max()
+        .copied()
+        .unwrap_or(0);
+    let min_row = pixel_coords
+        .iter()
+        .map(|(_, r)| r)
+        .min()
+        .copied()
+        .unwrap_or(0)
+        .max(0);
+    let max_row = pixel_coords
+        .iter()
+        .map(|(_, r)| r)
+        .max()
+        .copied()
+        .unwrap_or(0);
 
     let col_off = (min_col - safe_padding).max(0) as u32;
     let row_off = (min_row - safe_padding).max(0) as u32;
@@ -642,12 +704,28 @@ pub fn render_single_tile(
     format: &str,
 ) -> Result<(Vec<u8>, u32, String), String> {
     let (data, rendered) = match format {
-        "raw-rgba" => {
-            render_raster_tile_ex(raster, z, x, y, size, bands, Some(resampling), stretch, true)?
-        }
-        "png" | _ => {
-            render_raster_tile_ex(raster, z, x, y, size, bands, Some(resampling), stretch, false)?
-        }
+        "raw-rgba" => render_raster_tile_ex(
+            raster,
+            z,
+            x,
+            y,
+            size,
+            bands,
+            Some(resampling),
+            stretch,
+            true,
+        )?,
+        "png" | _ => render_raster_tile_ex(
+            raster,
+            z,
+            x,
+            y,
+            size,
+            bands,
+            Some(resampling),
+            stretch,
+            false,
+        )?,
     };
     Ok((data, rendered, format.to_string()))
 }
@@ -933,7 +1011,12 @@ pub fn approximate_tile_affine(
     if raster.crs_type != "Projected" {
         return None;
     }
-    let corners = [(min_x, max_y), (max_x, max_y), (min_x, min_y), (max_x, min_y)];
+    let corners = [
+        (min_x, max_y),
+        (max_x, max_y),
+        (min_x, min_y),
+        (max_x, min_y),
+    ];
     let mut native_pts = Vec::with_capacity(4);
     for &(wx, wy) in &corners {
         let lng = mercator_to_lng(wx);

@@ -8,13 +8,18 @@ pub fn get_vector_tile_geojson(req: &VectorTileRequest) -> Result<String, String
 
     let content =
         std::fs::read_to_string(&req.path).map_err(|e| format!("Failed to read file: {}", e))?;
-    let geojson: geojson::GeoJson =
-        content.parse().map_err(|e| format!("Invalid GeoJSON: {}", e))?;
+    let geojson: geojson::GeoJson = content
+        .parse()
+        .map_err(|e| format!("Invalid GeoJSON: {}", e))?;
 
     let source_crs = resolve_geojson_source_crs(&geojson)?;
     let features = collect_geojson_features(&geojson, source_crs, &tile_rect)?;
 
-    let fc = geojson::FeatureCollection { bbox: None, features, foreign_members: None };
+    let fc = geojson::FeatureCollection {
+        bbox: None,
+        features,
+        foreign_members: None,
+    };
     serde_json::to_string(&fc).map_err(|e| format!("Serialization error: {}", e))
 }
 
@@ -39,7 +44,11 @@ pub fn get_shapefile_tile_geojson(req: &VectorTileRequest) -> Result<String, Str
         });
     }
 
-    let fc = geojson::FeatureCollection { bbox: None, features, foreign_members: None };
+    let fc = geojson::FeatureCollection {
+        bbox: None,
+        features,
+        foreign_members: None,
+    };
     serde_json::to_string(&fc).map_err(|e| format!("Serialization error: {}", e))
 }
 
@@ -160,7 +169,11 @@ pub fn get_wkt_tile_geojson(req: &VectorTileRequest) -> Result<String, String> {
         vec![]
     };
 
-    let fc = geojson::FeatureCollection { bbox: None, features, foreign_members: None };
+    let fc = geojson::FeatureCollection {
+        bbox: None,
+        features,
+        foreign_members: None,
+    };
     serde_json::to_string(&fc).map_err(|e| format!("Serialization error: {}", e))
 }
 
@@ -176,17 +189,25 @@ pub fn get_kml_tile_geojson(req: &VectorTileRequest) -> Result<String, String> {
     let kml_doc: Kml<f64> = if ext == "kmz" {
         let mut reader = kml::KmlReader::from_kmz_path(&req.path)
             .map_err(|e| format!("Failed to open KMZ: {}", e))?;
-        reader.read().map_err(|e| format!("Failed to parse KMZ: {}", e))?
+        reader
+            .read()
+            .map_err(|e| format!("Failed to parse KMZ: {}", e))?
     } else {
         let content =
             std::fs::read_to_string(&req.path).map_err(|e| format!("Failed to read KML: {}", e))?;
-        content.parse::<Kml<f64>>().map_err(|e| format!("Invalid KML: {}", e))?
+        content
+            .parse::<Kml<f64>>()
+            .map_err(|e| format!("Invalid KML: {}", e))?
     };
 
     let mut features = Vec::new();
     collect_kml_placemarks(&kml_doc, &tile_rect, &mut features);
 
-    let fc = geojson::FeatureCollection { bbox: None, features, foreign_members: None };
+    let fc = geojson::FeatureCollection {
+        bbox: None,
+        features,
+        foreign_members: None,
+    };
     serde_json::to_string(&fc).map_err(|e| format!("Serialization error: {}", e))
 }
 

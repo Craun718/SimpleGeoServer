@@ -56,8 +56,11 @@ fn load_and_cache_shapefile(path: &str) -> Result<Arc<CachedShapefile>, String> 
     let attributes: Vec<Option<serde_json::Map<String, serde_json::Value>>> = if dbf_path.exists() {
         match shapefile::dbase::Reader::from_path(&dbf_path) {
             Ok(mut dbase_reader) => {
-                let field_names: Vec<String> =
-                    dbase_reader.fields().iter().map(|f| f.name().to_string()).collect();
+                let field_names: Vec<String> = dbase_reader
+                    .fields()
+                    .iter()
+                    .map(|f| f.name().to_string())
+                    .collect();
                 dbase_reader
                     .iter_records()
                     .map(|rec| {
@@ -168,7 +171,9 @@ fn parse_epsg_code(code: u16) -> Option<crate::reproject::KnownCrs> {
 
 pub(crate) fn get_shapefile(path: &str) -> Result<Arc<CachedShapefile>, String> {
     {
-        let cache = SHAPEFILE_CACHE.read().map_err(|e| format!("Cache lock error: {}", e))?;
+        let cache = SHAPEFILE_CACHE
+            .read()
+            .map_err(|e| format!("Cache lock error: {}", e))?;
         if let Some(sf) = cache.get(path) {
             return Ok(Arc::clone(sf));
         }
@@ -176,7 +181,9 @@ pub(crate) fn get_shapefile(path: &str) -> Result<Arc<CachedShapefile>, String> 
     let sf = load_and_cache_shapefile(path)?;
     let arc = Arc::clone(&sf);
     {
-        let mut cache = SHAPEFILE_CACHE.write().map_err(|e| format!("Cache lock error: {}", e))?;
+        let mut cache = SHAPEFILE_CACHE
+            .write()
+            .map_err(|e| format!("Cache lock error: {}", e))?;
         cache.insert(path.to_string(), sf);
     }
     Ok(arc)

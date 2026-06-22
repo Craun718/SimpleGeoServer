@@ -13,7 +13,12 @@ fn main() {
     let candidates = [
         manifest.join("crslist.json"),
         manifest.join("data").join("crslist.json"),
-        manifest.join("..").join("..").join("..").join("public").join("crslist.json"),
+        manifest
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("public")
+            .join("crslist.json"),
     ];
 
     let json_path = candidates.iter().find(|p| p.exists());

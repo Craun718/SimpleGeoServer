@@ -100,5 +100,11 @@ fn render_single(
         false,
     )?;
 
-    Ok(BatchTileResult { x: job.x, y: job.y, z: job.z, data: png_data, rendered })
+    Ok(BatchTileResult {
+        x: job.x,
+        y: job.y,
+        z: job.z,
+        data: png_data,
+        rendered,
+    })
 }

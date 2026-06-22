@@ -86,7 +86,11 @@ impl DataSource for RasterDataSource {
             native_crs: String::new(),
             native_extent: [0.0; 4],
         });
-        DataSourceInfo { name: self.name.clone(), data_type: DataType::Raster, tile_info }
+        DataSourceInfo {
+            name: self.name.clone(),
+            data_type: DataType::Raster,
+            tile_info,
+        }
     }
 
     fn render_raster_tile(
@@ -124,12 +128,15 @@ impl DataSource for RasterDataSource {
         let raster =
             tile::get_raster(&self.path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-        let stretch = params.stretch.as_deref().map(|s| crate::resample::StretchConfig {
-            method: crate::resample::StretchMethod::from_str(s),
-            min_percent: None,
-            max_percent: None,
-            std_dev_factor: params.std_dev_factor,
-        });
+        let stretch = params
+            .stretch
+            .as_deref()
+            .map(|s| crate::resample::StretchConfig {
+                method: crate::resample::StretchMethod::from_str(s),
+                min_percent: None,
+                max_percent: None,
+                std_dev_factor: params.std_dev_factor,
+            });
 
         let (png_data, _rendered) = tile::render_raster_tile_ex(
             &raster,
@@ -165,12 +172,15 @@ impl DataSource for RasterDataSource {
             .map(crate::resample::ResamplingMode::from_str)
             .unwrap_or(crate::resample::ResamplingMode::NearestNeighbor);
         let bands = params.bands.clone().unwrap_or_else(|| vec![1, 2, 3]);
-        let _stretch = params.stretch.as_deref().map(|s| crate::resample::StretchConfig {
-            method: crate::resample::StretchMethod::from_str(s),
-            min_percent: params.min_percent,
-            max_percent: params.max_percent,
-            std_dev_factor: params.std_dev_factor,
-        });
+        let _stretch = params
+            .stretch
+            .as_deref()
+            .map(|s| crate::resample::StretchConfig {
+                method: crate::resample::StretchMethod::from_str(s),
+                min_percent: params.min_percent,
+                max_percent: params.max_percent,
+                std_dev_factor: params.std_dev_factor,
+            });
 
         let cache_key = crate::tile_cache::TileCacheKey::new_webp(&self.path, z, x, y, resampling);
 
@@ -249,7 +259,11 @@ impl DataSource for VectorDataSource {
         } else {
             tile::get_vector_tile_info()
         };
-        DataSourceInfo { name: self.name.clone(), data_type: DataType::Vector, tile_info }
+        DataSourceInfo {
+            name: self.name.clone(),
+            data_type: DataType::Vector,
+            tile_info,
+        }
     }
 
     fn render_raster_tile(
@@ -293,7 +307,12 @@ impl DataSource for VectorDataSource {
     }
 
     fn render_vector_tile(&self, z: u32, x: u32, y: u32) -> DataSourceResult<Vec<u8>> {
-        let req = tile::VectorTileRequest { path: self.path.clone(), z, x, y };
+        let req = tile::VectorTileRequest {
+            path: self.path.clone(),
+            z,
+            x,
+            y,
+        };
         let geojson = match self.ext.as_str() {
             "shp" => tile::get_shapefile_tile_geojson(&req),
             "wkt" => tile::get_wkt_tile_geojson(&req),
