@@ -399,6 +399,6 @@ pub fn generate_ovr(path: &str) -> Result<(), String> {
         level_count += 1;
     }
 
-    tracing::info!("Generated .ovr with {} levels: {}", level_count, ovr_path);
+    log::info!("Generated .ovr with {} levels: {}", level_count, ovr_path);
     Ok(())
 }

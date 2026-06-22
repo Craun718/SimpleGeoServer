@@ -719,7 +719,7 @@ pub fn load_and_cache_raster_with_progress(
                             ChunkType::Strip => 1u32,
                             ChunkType::Tile => (sub_w + chunk_w - 1) / chunk_w,
                         };
-                        tracing::info!("Found sub-IFD {}: {}x{}", i, sub_w, sub_h);
+                        log::info!("Found sub-IFD {}: {}x{}", i, sub_w, sub_h);
                         all_ifds.push(IfdInfo {
                             index: all_ifds.len(),
                             width: sub_w,
@@ -749,11 +749,11 @@ pub fn load_and_cache_raster_with_progress(
             all_ifds.len(),
         ) {
             Ok(ovr_ifds) => {
-                tracing::info!("Loaded {} overview(s) from .ovr file", ovr_ifds.len());
+                log::info!("Loaded {} overview(s) from .ovr file", ovr_ifds.len());
                 all_ifds.extend(ovr_ifds);
             }
             Err(e) => {
-                tracing::warn!("Failed to parse .ovr file '{}': {}", ovr_path, e);
+                log::warn!("Failed to parse .ovr file '{}': {}", ovr_path, e);
             }
         }
     } else {
@@ -761,9 +761,9 @@ pub fn load_and_cache_raster_with_progress(
         let path_clone = path.to_string();
         std::thread::spawn(move || {
             if let Err(e) = super::raster_ovr::generate_ovr(&path_clone) {
-                tracing::warn!("generate_ovr failed for {}: {}", path_clone, e);
+                log::warn!("generate_ovr failed for {}: {}", path_clone, e);
             } else {
-                tracing::info!("Auto-generated .ovr for {}", path_clone);
+                log::info!("Auto-generated .ovr for {}", path_clone);
             }
         });
     }

@@ -362,7 +362,7 @@ fn render_tile_sync(
                         return encode_webp(&result.rgba, size as usize);
                     }
                     Ok(_) => {}
-                    Err(e) => tracing::warn!("GPU tile render failed, falling back to CPU: {e}"),
+                    Err(e) => log::warn!("GPU tile render failed, falling back to CPU: {e}"),
                 }
             }
         }

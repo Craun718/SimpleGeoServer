@@ -276,11 +276,11 @@ pub struct TileRenderResult {
 pub static GPU_RENDERER: LazyLock<Option<GpuRenderer>> = LazyLock::new(
     || match pollster::block_on(GpuRenderer::new()) {
         Ok(renderer) => {
-            tracing::info!("GPU renderer initialized successfully");
+            log::info!("GPU renderer initialized successfully");
             Some(renderer)
         }
         Err(e) => {
-            tracing::info!(
+            log::info!(
                 "GPU renderer not available (this is normal if no GPU detected), using CPU fallback: {e}"
             );
             None

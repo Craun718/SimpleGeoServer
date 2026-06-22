@@ -192,7 +192,7 @@ static DISK_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_disk_cache_dir(path: &str) {
     if let Err(existing) = DISK_CACHE_DIR.set(PathBuf::from(path)) {
-        tracing::warn!("Disk cache dir already set to {:?}, ignoring", existing);
+        log::warn!("Disk cache dir already set to {:?}, ignoring", existing);
     }
 }
 
@@ -200,7 +200,7 @@ pub fn set_disk_cache_dir(path: &str) {
 fn get_disk_cache_dir() -> &'static Path {
     DISK_CACHE_DIR.get_or_init(|| {
         let tmp = tempfile::tempdir().expect("Failed to create temp dir for tile cache");
-        tracing::info!("Using temp dir for disk cache: {:?}", tmp.path());
+        log::info!("Using temp dir for disk cache: {:?}", tmp.path());
         tmp.into_path()
     })
 }
@@ -353,7 +353,7 @@ pub fn evict_disk_cache_if_needed() {
         }
     }
     if removed > 0 {
-        tracing::info!(
+        log::info!(
             "Evicted {:.1} MB from disk tile cache",
             removed as f64 / 1_048_576.0
         );

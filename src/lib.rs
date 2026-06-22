@@ -646,7 +646,7 @@ fn scan_and_auto_mount(root: &str, registry: &DataSourceRegistry) {
         let path_str = path.to_string_lossy().to_string();
         if let Some(source) = data_source::create_file_source(name.clone(), path_str, &ext) {
             if let Err(e) = registry.mount(name, source) {
-                tracing::warn!("Failed to mount '{}': {}", path.display(), e);
+                log::warn!("Failed to mount '{}': {}", path.display(), e);
             }
         }
     }
@@ -669,10 +669,10 @@ fn build_registry_from_config(
                 data_source::create_file_source(src.name.clone(), src.path.clone(), &ext)
             {
                 if let Err(e) = registry.mount(src.name.clone(), source) {
-                    tracing::warn!("Failed to mount '{}' from config: {}", src.name, e);
+                    log::warn!("Failed to mount '{}' from config: {}", src.name, e);
                 }
             } else {
-                tracing::warn!("Unsupported file type for source '{}': .{}", src.name, ext);
+                log::warn!("Unsupported file type for source '{}': .{}", src.name, ext);
             }
         }
     }
@@ -685,11 +685,11 @@ fn load_config_file(path: &Option<std::path::PathBuf>) -> Option<config::AppConf
     let p = path.as_ref()?;
     match config::load_config(p) {
         Ok(cfg) => {
-            tracing::info!("Loaded config from {}", p.display());
+            log::info!("Loaded config from {}", p.display());
             Some(cfg)
         }
         Err(e) => {
-            tracing::warn!("Failed to load config: {e}");
+            log::warn!("Failed to load config: {e}");
             None
         }
     }
@@ -874,7 +874,7 @@ pub fn build_router(
         file_routes.sort();
         for route in &file_routes {
             if *route != "/api/geo-files" {
-                tracing::info!("  {}", route);
+                log::info!("  {}", route);
             }
         }
     }
@@ -904,6 +904,7 @@ pub fn build_router(
 }
 
 pub fn run() {
+    let _ = tracing_log::LogTracer::init();
     let cli = Cli::parse();
 
     match &cli.command {
@@ -1045,11 +1046,11 @@ pub fn run() {
             IpAddr::V6(ip) => vec![format!("http://[{}]:{}", ip, addr.port())],
         };
 
-        tracing::info!("SimpleGeoServer listening on {}", addr);
-        tracing::info!("Serving files from {}", root);
+        log::info!("SimpleGeoServer listening on {}", addr);
+        log::info!("Serving files from {}", root);
         for url in &access_urls {
-            tracing::info!("Open in browser: {}", url);
-            tracing::info!("API documentation: {}/docs", url);
+            log::info!("Open in browser: {}", url);
+            log::info!("API documentation: {}/docs", url);
         }
 
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();

@@ -113,6 +113,6 @@ pub fn generate_default_config(path: &Path) -> Result<(), String> {
     std::fs::write(path, &yaml)
         .map_err(|e| format!("Failed to write config file {}: {e}", path.display()))?;
 
-    tracing::info!("Generated default config: {}", path.display());
+    log::info!("Generated default config: {}", path.display());
     Ok(())
 }
