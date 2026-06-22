@@ -84,13 +84,8 @@ impl RenderFarm {
                 entry.senders.push(sender);
                 false
             } else {
-                pending.insert(
-                    key,
-                    PendingEntry {
-                        senders: vec![sender],
-                        _submit_time: submit_time,
-                    },
-                );
+                pending
+                    .insert(key, PendingEntry { senders: vec![sender], _submit_time: submit_time });
                 true
             }
         };
@@ -112,9 +107,7 @@ impl RenderFarm {
             queue.push(job);
         }
 
-        receiver
-            .await
-            .map_err(|_| "Render farm: response channel closed".to_string())?
+        receiver.await.map_err(|_| "Render farm: response channel closed".to_string())?
     }
 
     fn process_job(&self, job: TileJob) -> Option<(TileJob, Result<Vec<u8>, String>)> {
@@ -134,10 +127,7 @@ impl RenderFarm {
 pub static RENDER_FARM: LazyLock<Arc<RenderFarm>> = LazyLock::new(|| {
     let farm = Arc::new(RenderFarm::new());
 
-    let num_workers = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .max(2);
+    let num_workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2);
     for _ in 0..num_workers {
         let f = farm.clone();
         std::thread::spawn(move || {
@@ -198,12 +188,7 @@ fn render_tile_sync(
     let nc_span_x = nc_se.0 - nc_sw.0;
     let nc_span_y = nc_nw.1 - nc_sw.1;
 
-    let corners_3857 = [
-        (min_x, max_y),
-        (max_x, max_y),
-        (min_x, min_y),
-        (max_x, min_y),
-    ];
+    let corners_3857 = [(min_x, max_y), (max_x, max_y), (min_x, min_y), (max_x, min_y)];
     let mut pixel_coords: Vec<(i64, i64)> = Vec::with_capacity(4);
     for &(wx, wy) in &corners_3857 {
         let lng = tile::mercator_to_lng(wx);
@@ -236,32 +221,10 @@ fn render_tile_sync(
     }
 
     let safe_padding = 10i64;
-    let min_col = pixel_coords
-        .iter()
-        .map(|(c, _)| c)
-        .min()
-        .copied()
-        .unwrap_or(0)
-        .max(0);
-    let max_col = pixel_coords
-        .iter()
-        .map(|(c, _)| c)
-        .max()
-        .copied()
-        .unwrap_or(0);
-    let min_row = pixel_coords
-        .iter()
-        .map(|(_, r)| r)
-        .min()
-        .copied()
-        .unwrap_or(0)
-        .max(0);
-    let max_row = pixel_coords
-        .iter()
-        .map(|(_, r)| r)
-        .max()
-        .copied()
-        .unwrap_or(0);
+    let min_col = pixel_coords.iter().map(|(c, _)| c).min().copied().unwrap_or(0).max(0);
+    let max_col = pixel_coords.iter().map(|(c, _)| c).max().copied().unwrap_or(0);
+    let min_row = pixel_coords.iter().map(|(_, r)| r).min().copied().unwrap_or(0).max(0);
+    let max_row = pixel_coords.iter().map(|(_, r)| r).max().copied().unwrap_or(0);
 
     let col_off = (min_col - safe_padding).max(0) as u32;
     let row_off = (min_row - safe_padding).max(0) as u32;

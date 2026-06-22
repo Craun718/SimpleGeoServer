@@ -19,11 +19,7 @@ struct RasterCacheInner {
 
 impl RasterCacheInner {
     fn new(max_entries: usize) -> Self {
-        Self {
-            map: HashMap::new(),
-            order: VecDeque::with_capacity(max_entries),
-            max_entries,
-        }
+        Self { map: HashMap::new(), order: VecDeque::with_capacity(max_entries), max_entries }
     }
 
     fn get(&mut self, path: &str) -> Option<&Arc<CachedRaster>> {
@@ -63,10 +59,8 @@ static RASTER_CACHE: LazyLock<RwLock<RasterCacheInner>> =
 
 fn find_ovr_file(tif_path: &str) -> Option<String> {
     let p = std::path::Path::new(tif_path);
-    let candidates = [
-        format!("{}.ovr", tif_path),
-        p.with_extension("ovr").to_string_lossy().to_string(),
-    ];
+    let candidates =
+        [format!("{}.ovr", tif_path), p.with_extension("ovr").to_string_lossy().to_string()];
     for path in &candidates {
         if std::path::Path::new(path).exists() {
             return Some(path.clone());
@@ -79,14 +73,10 @@ fn read_geo_transform_tile(path: &str) -> [f64; 6] {
     let tfw_path = std::path::Path::new(path).with_extension("tfw");
     if tfw_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&tfw_path) {
-            let values: Vec<f64> = content
-                .lines()
-                .filter_map(|l| l.trim().parse::<f64>().ok())
-                .collect();
+            let values: Vec<f64> =
+                content.lines().filter_map(|l| l.trim().parse::<f64>().ok()).collect();
             if values.len() == 6 {
-                return [
-                    values[4], values[0], values[1], values[5], values[2], values[3],
-                ];
+                return [values[4], values[0], values[1], values[5], values[2], values[3]];
             }
         }
     }
@@ -108,9 +98,7 @@ fn read_geo_transform_tile(path: &str) -> [f64; 6] {
 
 pub fn get_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
     {
-        let mut cache = RASTER_CACHE
-            .write()
-            .map_err(|e| format!("Cache lock error: {}", e))?;
+        let mut cache = RASTER_CACHE.write().map_err(|e| format!("Cache lock error: {}", e))?;
         if let Some(raster) = cache.get(path) {
             return Ok(Arc::clone(raster));
         }
@@ -118,9 +106,7 @@ pub fn get_raster(path: &str) -> Result<Arc<CachedRaster>, String> {
     let raster = load_and_cache_raster(path)?;
     let arc = Arc::clone(&raster);
     {
-        let mut cache = RASTER_CACHE
-            .write()
-            .map_err(|e| format!("Cache lock error: {}", e))?;
+        let mut cache = RASTER_CACHE.write().map_err(|e| format!("Cache lock error: {}", e))?;
         cache.insert(path.to_string(), raster);
     }
     Ok(arc)
@@ -142,9 +128,7 @@ fn estimate_raster_size_bytes(raster: &CachedRaster) -> u64 {
 }
 
 pub fn raster_memory_cache_size_bytes() -> Result<u64, String> {
-    let cache = RASTER_CACHE
-        .write()
-        .map_err(|e| format!("Cache lock error: {}", e))?;
+    let cache = RASTER_CACHE.write().map_err(|e| format!("Cache lock error: {}", e))?;
 
     Ok(cache.map.iter().fold(0u64, |total, (path, raster)| {
         total
@@ -155,9 +139,7 @@ pub fn raster_memory_cache_size_bytes() -> Result<u64, String> {
 
 #[allow(dead_code)]
 pub fn clear_raster_memory_cache() -> Result<(), String> {
-    let mut cache = RASTER_CACHE
-        .write()
-        .map_err(|e| format!("Cache lock error: {}", e))?;
+    let mut cache = RASTER_CACHE.write().map_err(|e| format!("Cache lock error: {}", e))?;
     cache.map.clear();
     cache.order.clear();
     Ok(())
@@ -225,14 +207,11 @@ pub fn open_raster_metadata(path: &str) -> Result<RasterFileInfo, String> {
         .map_err(|e| format!("Failed to create TIFF decoder: {}", e))?
         .with_limits(Limits::unlimited());
 
-    let (width, height) = decoder
-        .dimensions()
-        .map_err(|e| format!("Failed to read dimensions: {}", e))?;
+    let (width, height) =
+        decoder.dimensions().map_err(|e| format!("Failed to read dimensions: {}", e))?;
 
-    let data_type = decoder
-        .colortype()
-        .map(|ct| format!("{:?}", ct))
-        .unwrap_or_else(|_| "Unknown".to_string());
+    let data_type =
+        decoder.colortype().map(|ct| format!("{:?}", ct)).unwrap_or_else(|_| "Unknown".to_string());
 
     let no_data = crate::raster::read_nodata_value(&mut decoder);
 
@@ -253,11 +232,7 @@ pub fn open_raster_metadata(path: &str) -> Result<RasterFileInfo, String> {
             .ok()
             .flatten()
             .unwrap_or(1);
-        if planar == 2 {
-            InterleaveType::Planar
-        } else {
-            InterleaveType::Chunky
-        }
+        if planar == 2 { InterleaveType::Planar } else { InterleaveType::Chunky }
     };
 
     let bands = {
@@ -269,9 +244,8 @@ pub fn open_raster_metadata(path: &str) -> Result<RasterFileInfo, String> {
         if let Some(spp) = tag_samples {
             spp
         } else {
-            let first_chunk = decoder
-                .read_chunk(0)
-                .map_err(|e| format!("Failed to read first chunk: {}", e))?;
+            let first_chunk =
+                decoder.read_chunk(0).map_err(|e| format!("Failed to read first chunk: {}", e))?;
             let chunk_f64 = crate::raster::decode_result_to_f64_vec(&first_chunk);
             let (w, h) = decoder.chunk_data_dimensions(0);
             let chunk_pixels = (w * h) as usize;
@@ -293,12 +267,7 @@ pub fn open_raster_metadata(path: &str) -> Result<RasterFileInfo, String> {
 
     let extent_wgs84 = crate::reproject::extent_to_wgs84(&geo_transform, width, height, &geo_key);
     let wgs84_corners = if let Some([min_lng, min_lat, max_lng, max_lat]) = extent_wgs84 {
-        [
-            (min_lng, min_lat),
-            (max_lng, min_lat),
-            (min_lng, max_lat),
-            (max_lng, max_lat),
-        ]
+        [(min_lng, min_lat), (max_lng, min_lat), (min_lng, max_lat), (max_lng, max_lat)]
     } else {
         let gt = geo_transform;
         let c0 = (gt[0], gt[3]);
@@ -309,12 +278,7 @@ pub fn open_raster_metadata(path: &str) -> Result<RasterFileInfo, String> {
         let max_lng = c0.0.max(c1.0).max(c2.0).max(c3.0);
         let min_lat = c0.1.min(c1.1).min(c2.1).min(c3.1);
         let max_lat = c0.1.max(c1.1).max(c2.1).max(c3.1);
-        [
-            (min_lng, min_lat),
-            (max_lng, min_lat),
-            (min_lng, max_lat),
-            (max_lng, max_lat),
-        ]
+        [(min_lng, min_lat), (max_lng, min_lat), (min_lng, max_lat), (max_lng, max_lat)]
     };
 
     let native_corners = if crs_type == "Geographic" || crs_type == "Unknown" {
@@ -348,11 +312,7 @@ pub fn open_raster_metadata(path: &str) -> Result<RasterFileInfo, String> {
         };
         if raster_res_3857 > 0.0 {
             let ratio = (2.0 * super::tile_math::C) / (256.0 * raster_res_3857);
-            if ratio > 1.0 {
-                ratio.log2().ceil() as u32
-            } else {
-                0
-            }
+            if ratio > 1.0 { ratio.log2().ceil() as u32 } else { 0 }
         } else {
             22
         }
@@ -389,14 +349,11 @@ pub fn load_and_cache_raster_with_progress(
         .map_err(|e| format!("Failed to create TIFF decoder: {}", e))?
         .with_limits(Limits::unlimited());
 
-    let (width, height) = decoder
-        .dimensions()
-        .map_err(|e| format!("Failed to read dimensions: {}", e))?;
+    let (width, height) =
+        decoder.dimensions().map_err(|e| format!("Failed to read dimensions: {}", e))?;
 
-    let data_type = decoder
-        .colortype()
-        .map(|ct| format!("{:?}", ct))
-        .unwrap_or_else(|_| "Unknown".to_string());
+    let data_type =
+        decoder.colortype().map(|ct| format!("{:?}", ct)).unwrap_or_else(|_| "Unknown".to_string());
 
     let no_data = crate::raster::read_nodata_value(&mut decoder);
 
@@ -417,11 +374,7 @@ pub fn load_and_cache_raster_with_progress(
             .ok()
             .flatten()
             .unwrap_or(1);
-        if planar == 2 {
-            InterleaveType::Planar
-        } else {
-            InterleaveType::Chunky
-        }
+        if planar == 2 { InterleaveType::Planar } else { InterleaveType::Chunky }
     };
 
     let bands = {
@@ -433,9 +386,8 @@ pub fn load_and_cache_raster_with_progress(
         if let Some(spp) = tag_samples {
             spp
         } else {
-            let first_chunk = decoder
-                .read_chunk(0)
-                .map_err(|e| format!("Failed to read first chunk: {}", e))?;
+            let first_chunk =
+                decoder.read_chunk(0).map_err(|e| format!("Failed to read first chunk: {}", e))?;
             let chunk_f64 = crate::raster::decode_result_to_f64_vec(&first_chunk);
             let (w, h) = decoder.chunk_data_dimensions(0);
             let chunk_pixels = (w * h) as usize;
@@ -469,12 +421,7 @@ pub fn load_and_cache_raster_with_progress(
 
     let extent_wgs84 = crate::reproject::extent_to_wgs84(&geo_transform, width, height, &geo_key);
     let wgs84_corners = if let Some([min_lng, min_lat, max_lng, max_lat]) = extent_wgs84 {
-        [
-            (min_lng, min_lat),
-            (max_lng, min_lat),
-            (min_lng, max_lat),
-            (max_lng, max_lat),
-        ]
+        [(min_lng, min_lat), (max_lng, min_lat), (min_lng, max_lat), (max_lng, max_lat)]
     } else {
         let gt = geo_transform;
         let c0 = (gt[0], gt[3]);
@@ -485,12 +432,7 @@ pub fn load_and_cache_raster_with_progress(
         let max_lng = c0.0.max(c1.0).max(c2.0).max(c3.0);
         let min_lat = c0.1.min(c1.1).min(c2.1).min(c3.1);
         let max_lat = c0.1.max(c1.1).max(c2.1).max(c3.1);
-        [
-            (min_lng, min_lat),
-            (max_lng, min_lat),
-            (min_lng, max_lat),
-            (max_lng, max_lat),
-        ]
+        [(min_lng, min_lat), (max_lng, min_lat), (min_lng, max_lat), (max_lng, max_lat)]
     };
 
     let native_corners = if crs_type == "Geographic" || crs_type == "Unknown" {
@@ -524,11 +466,7 @@ pub fn load_and_cache_raster_with_progress(
         };
         if raster_res_3857 > 0.0 {
             let ratio = (2.0 * super::tile_math::C) / (256.0 * raster_res_3857);
-            if ratio > 1.0 {
-                ratio.log2().ceil() as u32
-            } else {
-                0
-            }
+            if ratio > 1.0 { ratio.log2().ceil() as u32 } else { 0 }
         } else {
             22
         }
@@ -565,9 +503,8 @@ pub fn load_and_cache_raster_with_progress(
     let mut means = vec![0.0f64; bands];
     let mut m2 = vec![0.0f64; bands];
     const MAX_PERCENTILE_SAMPLES: usize = 50000;
-    let mut percentile_samples: Vec<Vec<f64>> = (0..bands)
-        .map(|_| Vec::with_capacity(MAX_PERCENTILE_SAMPLES))
-        .collect();
+    let mut percentile_samples: Vec<Vec<f64>> =
+        (0..bands).map(|_| Vec::with_capacity(MAX_PERCENTILE_SAMPLES)).collect();
 
     if interleave == InterleaveType::Planar {
         let chunks_per_band = total_chunks / bands as u32;
@@ -679,13 +616,7 @@ pub fn load_and_cache_raster_with_progress(
     drop(percentile_samples);
 
     let std_dev_values: Vec<f64> = (0..bands)
-        .map(|b| {
-            if valid_counts[b] > 1 {
-                (m2[b] / valid_counts[b] as f64).sqrt()
-            } else {
-                0.0
-            }
-        })
+        .map(|b| if valid_counts[b] > 1 { (m2[b] / valid_counts[b] as f64).sqrt() } else { 0.0 })
         .collect();
 
     let percentile_bounds: Vec<(f64, f64)> = percentile_lo.into_iter().zip(percentile_hi).collect();

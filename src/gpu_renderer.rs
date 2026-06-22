@@ -503,14 +503,8 @@ impl GpuRenderer {
                     binding: 0,
                     resource: self.params_buffer.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.src_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.out_buffer.as_entire_binding(),
-                },
+                wgpu::BindGroupEntry { binding: 1, resource: self.src_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.out_buffer.as_entire_binding() },
             ],
         });
 
@@ -520,8 +514,7 @@ impl GpuRenderer {
                 std::mem::size_of::<ShaderParams>(),
             )
         };
-        self.queue
-            .write_buffer(&self.params_buffer, 0, params_bytes);
+        self.queue.write_buffer(&self.params_buffer, 0, params_bytes);
 
         let src_bytes = unsafe {
             std::slice::from_raw_parts(
@@ -531,11 +524,9 @@ impl GpuRenderer {
         };
         self.queue.write_buffer(&self.src_buffer, 0, src_bytes);
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Tile Render Encoder"),
-            });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Tile Render Encoder"),
+        });
 
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -574,10 +565,7 @@ impl GpuRenderer {
 
                 let rendered_pixels = rgba.chunks(4).filter(|p| p[3] > 0).count() as u32;
 
-                Ok(TileRenderResult {
-                    rgba,
-                    rendered_pixels,
-                })
+                Ok(TileRenderResult { rgba, rendered_pixels })
             }
             Err(e) => Err(format!("GPU readback error: {e:?}")),
         }

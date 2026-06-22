@@ -85,20 +85,15 @@ struct TileJson {
 // ─── 辅助函数 ───
 
 fn base_url(headers: &HeaderMap) -> String {
-    let host = headers
-        .get("host")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("localhost:8080");
+    let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("localhost:8080");
     format!("http://{}", host)
 }
 
 fn ows_exception_xml(code: &str, text: &str) -> Response {
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     let _ = writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)));
-    let root = BytesStart::new("ServiceExceptionReport").with_attributes(vec![
-        ("version", "1.3.0"),
-        ("xmlns", "http://www.opengis.net/ogc"),
-    ]);
+    let root = BytesStart::new("ServiceExceptionReport")
+        .with_attributes(vec![("version", "1.3.0"), ("xmlns", "http://www.opengis.net/ogc")]);
     let _ = writer.write_event(Event::Start(root));
     let se = BytesStart::new("ServiceException").with_attributes(vec![("code", code)]);
     let _ = writer.write_event(Event::Start(se));
@@ -106,11 +101,7 @@ fn ows_exception_xml(code: &str, text: &str) -> Response {
     let _ = writer.write_event(Event::End(BytesEnd::new("ServiceException")));
     let _ = writer.write_event(Event::End(BytesEnd::new("ServiceExceptionReport")));
     let xml = writer.into_inner();
-    (
-        StatusCode::BAD_REQUEST,
-        [(header::CONTENT_TYPE, "text/xml; charset=utf-8")],
-        xml,
-    )
+    (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/xml; charset=utf-8")], xml)
         .into_response()
 }
 
@@ -119,11 +110,7 @@ fn file_info(
     filename: &str,
 ) -> Result<(String, crate::tile::TileInfo), Response> {
     let source = registry.get(filename).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("Layer not found: {}", filename),
-        )
-            .into_response()
+        (StatusCode::NOT_FOUND, format!("Layer not found: {}", filename)).into_response()
     })?;
     let info = source.info();
     Ok((info.data_type.as_str().to_string(), info.tile_info))
@@ -136,18 +123,9 @@ fn extent_epsg3857(info: &crate::tile::TileInfo) -> [f64; 4] {
         crate::tile::R * (std::f64::consts::FRAC_PI_4 + lat_rad / 2.0).tan().ln()
     };
     let merc_x = |lng: f64| lng * crate::tile::C / 180.0;
-    let (min_lng, min_lat, max_lng, max_lat) = (
-        info.extent[0],
-        info.extent[1],
-        info.extent[2],
-        info.extent[3],
-    );
-    [
-        merc_x(min_lng),
-        merc_y(min_lat),
-        merc_x(max_lng),
-        merc_y(max_lat),
-    ]
+    let (min_lng, min_lat, max_lng, max_lat) =
+        (info.extent[0], info.extent[1], info.extent[2], info.extent[3]);
+    [merc_x(min_lng), merc_y(min_lat), merc_x(max_lng), merc_y(max_lat)]
 }
 
 fn write_empty(writer: &mut Writer<Vec<u8>>, name: &str, at: &[(&str, &str)]) {
@@ -174,10 +152,7 @@ pub(crate) async fn wms_handler(
     match req.to_uppercase().as_str() {
         "GETCAPABILITIES" => wms_capabilities_xml(&registry, &headers),
         "GETMAP" => wms_get_map(&registry, &headers, &params),
-        _ => ows_exception_xml(
-            "OperationNotSupported",
-            &format!("Unknown request: {}", req),
-        ),
+        _ => ows_exception_xml("OperationNotSupported", &format!("Unknown request: {}", req)),
     }
 }
 
@@ -189,23 +164,17 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     macro_rules! start {
         ($name:expr) => {
-            writer
-                .write_event(Event::Start(BytesStart::new($name)))
-                .unwrap()
+            writer.write_event(Event::Start(BytesStart::new($name))).unwrap()
         };
     }
     macro_rules! end {
         ($name:expr) => {
-            writer
-                .write_event(Event::End(BytesEnd::new($name)))
-                .unwrap()
+            writer.write_event(Event::End(BytesEnd::new($name))).unwrap()
         };
     }
     macro_rules! text {
         ($text:expr) => {
-            writer
-                .write_event(Event::Text(BytesText::new($text)))
-                .unwrap()
+            writer.write_event(Event::Text(BytesText::new($text))).unwrap()
         };
     }
     macro_rules! leaf {
@@ -216,9 +185,7 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
         };
     }
 
-    writer
-        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
-        .unwrap();
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
 
     let wms_caps = BytesStart::new("WMS_Capabilities").with_attributes(vec![
         ("version", "1.3.0"),
@@ -235,10 +202,7 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     write_empty(
         &mut writer,
         "OnlineResource",
-        &[
-            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-            ("xlink:href", &wms_url),
-        ],
+        &[("xmlns:xlink", "http://www.w3.org/1999/xlink"), ("xlink:href", &wms_url)],
     );
     end!("Service");
 
@@ -252,10 +216,7 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     write_empty(
         &mut writer,
         "OnlineResource",
-        &[
-            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-            ("xlink:href", &wms_url),
-        ],
+        &[("xmlns:xlink", "http://www.w3.org/1999/xlink"), ("xlink:href", &wms_url)],
     );
     end!("Get");
     end!("HTTP");
@@ -270,10 +231,7 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     write_empty(
         &mut writer,
         "OnlineResource",
-        &[
-            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-            ("xlink:href", &wms_url),
-        ],
+        &[("xmlns:xlink", "http://www.w3.org/1999/xlink"), ("xlink:href", &wms_url)],
     );
     end!("Get");
     end!("HTTP");
@@ -284,10 +242,7 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     write_empty(
         &mut writer,
         "OnlineResource",
-        &[
-            ("xmlns:xlink", "http://www.w3.org/1999/xlink"),
-            ("xlink:href", &wms_url),
-        ],
+        &[("xmlns:xlink", "http://www.w3.org/1999/xlink"), ("xlink:href", &wms_url)],
     );
     end!("Post");
     end!("HTTP");
@@ -378,14 +333,7 @@ fn wms_capabilities_xml(registry: &DataSourceRegistry, headers: &HeaderMap) -> R
     end!("WMS_Capabilities");
 
     let xml = writer.into_inner();
-    (
-        [(
-            header::CONTENT_TYPE,
-            "application/vnd.ogc.wms_xml; charset=utf-8",
-        )],
-        xml,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "application/vnd.ogc.wms_xml; charset=utf-8")], xml).into_response()
 }
 
 fn wms_get_map(registry: &DataSourceRegistry, _headers: &HeaderMap, params: &WmsQuery) -> Response {
@@ -422,10 +370,8 @@ fn wms_get_map(registry: &DataSourceRegistry, _headers: &HeaderMap, params: &Wms
     }
 
     let bbox_str_parsed = params.bbox.as_deref().unwrap_or("");
-    let bbox_parts: Vec<f64> = bbox_str_parsed
-        .split(',')
-        .filter_map(|s| s.trim().parse::<f64>().ok())
-        .collect();
+    let bbox_parts: Vec<f64> =
+        bbox_str_parsed.split(',').filter_map(|s| s.trim().parse::<f64>().ok()).collect();
     if bbox_parts.len() != 4 {
         return ows_exception_xml(
             "MissingParameterValue",
@@ -443,11 +389,8 @@ fn wms_get_map(registry: &DataSourceRegistry, _headers: &HeaderMap, params: &Wms
         );
     }
 
-    let transparent = params
-        .transparent
-        .as_deref()
-        .map(|v| v.to_uppercase() == "TRUE")
-        .unwrap_or(false);
+    let transparent =
+        params.transparent.as_deref().map(|v| v.to_uppercase() == "TRUE").unwrap_or(false);
 
     let info = source.info();
     let bands: Vec<u32> = if info.tile_info.data_type == "raster" && info.tile_info.min_zoom <= 22 {
@@ -477,31 +420,23 @@ pub(crate) async fn wmts_capabilities(
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     macro_rules! start {
         ($name:expr) => {
-            writer
-                .write_event(Event::Start(BytesStart::new($name)))
-                .unwrap()
+            writer.write_event(Event::Start(BytesStart::new($name))).unwrap()
         };
     }
     macro_rules! end {
         ($name:expr) => {
-            writer
-                .write_event(Event::End(BytesEnd::new($name)))
-                .unwrap()
+            writer.write_event(Event::End(BytesEnd::new($name))).unwrap()
         };
     }
     macro_rules! leaf {
         ($name:expr, $value:expr) => {
             start!($name);
-            writer
-                .write_event(Event::Text(BytesText::new($value)))
-                .unwrap();
+            writer.write_event(Event::Text(BytesText::new($value))).unwrap();
             end!($name);
         };
     }
 
-    writer
-        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
-        .unwrap();
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
 
     let caps = BytesStart::new("Capabilities").with_attributes(vec![
         ("xmlns", "http://www.opengis.net/wmts/1.0"),
@@ -567,11 +502,7 @@ pub(crate) async fn wmts_capabilities(
         write_empty(
             &mut writer,
             "ResourceURL",
-            &[
-                ("format", "image/png"),
-                ("resourceType", "tile"),
-                ("template", &tmpl),
-            ],
+            &[("format", "image/png"), ("resourceType", "tile"), ("template", &tmpl)],
         );
 
         end!("Layer");
@@ -604,11 +535,7 @@ pub(crate) async fn wmts_capabilities(
     end!("Capabilities");
 
     let xml = writer.into_inner();
-    (
-        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-        xml,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "application/xml; charset=utf-8")], xml).into_response()
 }
 
 pub(crate) async fn wmts_get_tile(
@@ -638,14 +565,10 @@ pub(crate) async fn tms_root(registry: Arc<DataSourceRegistry>, headers: HeaderM
 
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
 
-    writer
-        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
-        .unwrap();
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
 
-    let root_elem = BytesStart::new("TileMaps").with_attributes(vec![
-        ("version", "1.0.0"),
-        ("xmlns", "http://tms.osgeo.org/1.0.0"),
-    ]);
+    let root_elem = BytesStart::new("TileMaps")
+        .with_attributes(vec![("version", "1.0.0"), ("xmlns", "http://tms.osgeo.org/1.0.0")]);
     writer.write_event(Event::Start(root_elem)).unwrap();
 
     for source in &sources {
@@ -665,16 +588,10 @@ pub(crate) async fn tms_root(registry: Arc<DataSourceRegistry>, headers: HeaderM
         );
     }
 
-    writer
-        .write_event(Event::End(BytesEnd::new("TileMaps")))
-        .unwrap();
+    writer.write_event(Event::End(BytesEnd::new("TileMaps"))).unwrap();
     let xml = writer.into_inner();
 
-    (
-        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-        xml,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "application/xml; charset=utf-8")], xml).into_response()
 }
 
 pub(crate) async fn tms_layer(
@@ -693,10 +610,7 @@ pub(crate) async fn tms_layer(
     let info = source.info();
 
     if info.data_type != crate::data_source::DataType::Raster {
-        return (
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "TMS only supports raster layers",
-        )
+        return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "TMS only supports raster layers")
             .into_response();
     }
 
@@ -709,36 +623,26 @@ pub(crate) async fn tms_layer(
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     macro_rules! start {
         ($name:expr) => {
-            writer
-                .write_event(Event::Start(BytesStart::new($name)))
-                .unwrap()
+            writer.write_event(Event::Start(BytesStart::new($name))).unwrap()
         };
     }
     macro_rules! end {
         ($name:expr) => {
-            writer
-                .write_event(Event::End(BytesEnd::new($name)))
-                .unwrap()
+            writer.write_event(Event::End(BytesEnd::new($name))).unwrap()
         };
     }
     macro_rules! leaf {
         ($name:expr, $value:expr) => {
             start!($name);
-            writer
-                .write_event(Event::Text(BytesText::new($value)))
-                .unwrap();
+            writer.write_event(Event::Text(BytesText::new($value))).unwrap();
             end!($name);
         };
     }
 
-    writer
-        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
-        .unwrap();
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
 
-    let tm = BytesStart::new("TileMap").with_attributes(vec![
-        ("version", "1.0.0"),
-        ("xmlns", "http://tms.osgeo.org/1.0.0"),
-    ]);
+    let tm = BytesStart::new("TileMap")
+        .with_attributes(vec![("version", "1.0.0"), ("xmlns", "http://tms.osgeo.org/1.0.0")]);
     writer.write_event(Event::Start(tm)).unwrap();
     leaf!("Title", &layer);
     leaf!("Abstract", &format!("TMS layer for {}", layer));
@@ -747,12 +651,7 @@ pub(crate) async fn tms_layer(
     write_empty(
         &mut writer,
         "BoundingBox",
-        &[
-            ("minx", &em0s),
-            ("miny", &em1s),
-            ("maxx", &em2s),
-            ("maxy", &em3s),
-        ],
+        &[("minx", &em0s), ("miny", &em1s), ("maxx", &em2s), ("maxy", &em3s)],
     );
 
     let ox = (-crate::tile::C).to_string();
@@ -762,12 +661,7 @@ pub(crate) async fn tms_layer(
     write_empty(
         &mut writer,
         "TileFormat",
-        &[
-            ("width", "256"),
-            ("height", "256"),
-            ("mime-type", "image/png"),
-            ("extension", "png"),
-        ],
+        &[("width", "256"), ("height", "256"), ("mime-type", "image/png"), ("extension", "png")],
     );
 
     start!("TileSets");
@@ -781,22 +675,14 @@ pub(crate) async fn tms_layer(
         write_empty(
             &mut writer,
             "TileSet",
-            &[
-                ("href", &href),
-                ("units-per-pixel", &res_str),
-                ("order", &order_str),
-            ],
+            &[("href", &href), ("units-per-pixel", &res_str), ("order", &order_str)],
         );
     }
     end!("TileSets");
     end!("TileMap");
 
     let xml = writer.into_inner();
-    (
-        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-        xml,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "application/xml; charset=utf-8")], xml).into_response()
 }
 
 pub(crate) async fn tms_get_tile(
@@ -844,11 +730,7 @@ pub(crate) async fn tilejson(
     };
 
     let fmt = if dtype == "raster" { "png" } else { "geojson" };
-    let tile_type = if dtype == "raster" {
-        "raster"
-    } else {
-        "vector"
-    };
+    let tile_type = if dtype == "raster" { "raster" } else { "vector" };
 
     let e = info.extent;
     let center_lng = (e[0] + e[2]) / 2.0;

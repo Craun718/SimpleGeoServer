@@ -47,10 +47,7 @@ pub struct CacheSection {
 
 impl Default for CacheSection {
     fn default() -> Self {
-        Self {
-            l2_size_mb: Some(512),
-            disk_dir: None,
-        }
+        Self { l2_size_mb: Some(512), disk_dir: None }
     }
 }
 
@@ -66,11 +63,7 @@ pub struct AppConfig {
 
 impl Default for AppConfig {
     fn default() -> Self {
-        Self {
-            server: None,
-            sources: None,
-            cache: Some(CacheSection::default()),
-        }
+        Self { server: None, sources: None, cache: Some(CacheSection::default()) }
     }
 }
 

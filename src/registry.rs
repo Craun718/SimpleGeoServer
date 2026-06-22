@@ -19,18 +19,12 @@ pub struct DataSourceRegistry {
 
 impl DataSourceRegistry {
     pub fn new() -> Self {
-        Self {
-            sources: RwLock::new(HashMap::new()),
-            subscribers: RwLock::new(Vec::new()),
-        }
+        Self { sources: RwLock::new(HashMap::new()), subscribers: RwLock::new(Vec::new()) }
     }
 
     pub fn mount(&self, name: String, source: Arc<dyn DataSource>) -> Result<(), String> {
         {
-            let mut sources = self
-                .sources
-                .write()
-                .map_err(|e| format!("Lock error: {}", e))?;
+            let mut sources = self.sources.write().map_err(|e| format!("Lock error: {}", e))?;
             if sources.contains_key(&name) {
                 return Err(format!("DataSource '{}' already exists", name));
             }
@@ -51,13 +45,8 @@ impl DataSourceRegistry {
 
     pub fn unmount(&self, name: &str) -> Result<(), String> {
         {
-            let mut sources = self
-                .sources
-                .write()
-                .map_err(|e| format!("Lock error: {}", e))?;
-            sources
-                .remove(name)
-                .ok_or_else(|| format!("DataSource '{}' not found", name))?;
+            let mut sources = self.sources.write().map_err(|e| format!("Lock error: {}", e))?;
+            sources.remove(name).ok_or_else(|| format!("DataSource '{}' not found", name))?;
         }
         self.notify(RegistryEvent::Unmounted(name.to_string()));
         Ok(())
@@ -69,13 +58,8 @@ impl DataSourceRegistry {
     }
 
     pub fn list(&self) -> Vec<DataSourceInfo> {
-        let mut infos: Vec<DataSourceInfo> = self
-            .sources
-            .read()
-            .unwrap()
-            .values()
-            .map(|s| s.info())
-            .collect();
+        let mut infos: Vec<DataSourceInfo> =
+            self.sources.read().unwrap().values().map(|s| s.info()).collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));
         infos
     }
@@ -86,10 +70,7 @@ impl DataSourceRegistry {
 
     #[allow(dead_code)]
     pub fn contains(&self, name: &str) -> bool {
-        self.sources
-            .read()
-            .map(|s| s.contains_key(name))
-            .unwrap_or(false)
+        self.sources.read().map(|s| s.contains_key(name)).unwrap_or(false)
     }
 
     pub fn len(&self) -> usize {

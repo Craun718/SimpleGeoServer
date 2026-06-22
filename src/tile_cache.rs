@@ -38,9 +38,7 @@ pub(crate) static CONTENT_HASH_CACHE: LazyLock<Mutex<HashMap<String, String>>> =
 
 fn file_content_hash(path: &str) -> Result<String, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("Failed to open for hash: {e}"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|e| format!("Failed to stat for hash: {e}"))?;
+    let metadata = file.metadata().map_err(|e| format!("Failed to stat for hash: {e}"))?;
     let file_size = metadata.len();
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -52,21 +50,15 @@ fn file_content_hash(path: &str) -> Result<String, String> {
     let head_len = CONTENT_HASH_READ_SIZE.min(file_size);
     if head_len > 0 {
         let mut chunk = &mut buf[..head_len as usize];
-        reader
-            .read_exact(&mut chunk)
-            .map_err(|e| format!("Hash read head: {e}"))?;
+        reader.read_exact(&mut chunk).map_err(|e| format!("Hash read head: {e}"))?;
         chunk.hash(&mut hasher);
     }
 
     if file_size > CONTENT_HASH_READ_SIZE {
         let tail_start = file_size - CONTENT_HASH_READ_SIZE;
-        reader
-            .seek(SeekFrom::Start(tail_start))
-            .map_err(|e| format!("Hash seek tail: {e}"))?;
+        reader.seek(SeekFrom::Start(tail_start)).map_err(|e| format!("Hash seek tail: {e}"))?;
         let mut chunk = &mut buf[..CONTENT_HASH_READ_SIZE as usize];
-        reader
-            .read_exact(&mut chunk)
-            .map_err(|e| format!("Hash read tail: {e}"))?;
+        reader.read_exact(&mut chunk).map_err(|e| format!("Hash read tail: {e}"))?;
         chunk.hash(&mut hasher);
     }
 
@@ -149,11 +141,8 @@ impl MemCache {
         self.access_counter += 1;
 
         while self.current_bytes + size > self.max_bytes && !self.entries.is_empty() {
-            let oldest_key = self
-                .entries
-                .iter()
-                .min_by_key(|(_, e)| e.last_access)
-                .map(|(k, _)| k.clone());
+            let oldest_key =
+                self.entries.iter().min_by_key(|(_, e)| e.last_access).map(|(k, _)| k.clone());
             if let Some(k) = oldest_key {
                 if let Some(removed) = self.entries.remove(&k) {
                     self.current_bytes = self.current_bytes.saturating_sub(removed.size);
@@ -162,14 +151,7 @@ impl MemCache {
         }
 
         self.current_bytes += size;
-        self.entries.insert(
-            key,
-            MemCacheEntry {
-                data,
-                size,
-                last_access: self.access_counter,
-            },
-        );
+        self.entries.insert(key, MemCacheEntry { data, size, last_access: self.access_counter });
     }
 
     pub fn clear(&mut self) {
@@ -232,11 +214,7 @@ pub fn disk_cache_get(
     is_webp: bool,
 ) -> Option<Vec<u8>> {
     let p = tile_cache_path(path, z, x, y, resampling, is_webp);
-    if p.exists() {
-        std::fs::read(p).ok()
-    } else {
-        None
-    }
+    if p.exists() { std::fs::read(p).ok() } else { None }
 }
 
 pub fn disk_cache_set(
@@ -353,9 +331,6 @@ pub fn evict_disk_cache_if_needed() {
         }
     }
     if removed > 0 {
-        log::info!(
-            "Evicted {:.1} MB from disk tile cache",
-            removed as f64 / 1_048_576.0
-        );
+        log::info!("Evicted {:.1} MB from disk tile cache", removed as f64 / 1_048_576.0);
     }
 }
