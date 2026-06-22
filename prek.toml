@@ -1,0 +1,33 @@
+[[repos]]
+hooks = [
+  {id = "trailing-whitespace"},
+  {id = "end-of-file-fixer"},
+  {id = "check-yaml"},
+  {id = "check-toml"},
+]
+repo = "builtin"
+
+[[repos]]
+hooks = [{id = "typos"}]
+repo = "https://github.com/crate-ci/typos"
+rev = "v1.30.2"
+
+[[repos]]
+hooks = [
+  # --- commit ---
+  { id = "cargo-fmt", name = "cargo fmt", language = "system",
+    entry = "cargo fmt -- --check", pass_filenames = false,
+    types_or = ["rust"] },
+  { id = "cargo-check", name = "cargo check", language = "system",
+    entry = "cargo check --all-targets", pass_filenames = false,
+    types_or = ["rust"] },
+
+  # --- push ---
+  { id = "cargo-clippy", name = "cargo clippy", language = "system",
+    entry = "cargo clippy --all-targets -- -D warnings", pass_filenames = false,
+    types_or = ["rust"], stages = ["push"] },
+  { id = "cargo-test", name = "cargo test", language = "system",
+    entry = "cargo test", pass_filenames = false,
+    types_or = ["rust"], stages = ["push"] },
+]
+repo = "local"
