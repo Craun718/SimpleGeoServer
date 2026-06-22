@@ -12,6 +12,8 @@ pub struct ServerSection {
     pub gzip: Option<bool>,
     pub no_dotfiles: Option<bool>,
     pub log_format: Option<String>,
+    #[serde(default)]
+    pub allowed_paths: Option<Vec<String>>,
 }
 
 impl Default for ServerSection {
@@ -26,6 +28,7 @@ impl Default for ServerSection {
             gzip: None,
             no_dotfiles: None,
             log_format: None,
+            allowed_paths: None,
         }
     }
 }
@@ -90,6 +93,7 @@ pub fn generate_default_config(path: &Path) -> Result<(), String> {
             gzip: Some(false),
             no_dotfiles: Some(false),
             log_format: Some("default".to_string()),
+            allowed_paths: None,
         }),
         sources: Some(vec![
             SourceEntry {

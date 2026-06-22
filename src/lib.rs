@@ -12,8 +12,9 @@ use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
+
 use tower_http::{
-    compression::CompressionLayer, cors::CorsLayer, services::ServeDir, trace::TraceLayer,
+    compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer,
 };
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -115,6 +116,9 @@ pub struct Cli {
 
     #[arg(long)]
     pub l2_cache_mb: Option<u64>,
+
+    #[arg(long = "allow-path", value_name = "PATH", action = clap::ArgAction::Append)]
+    pub allow_path: Option<Vec<String>>,
 }
 
 #[derive(Subcommand)]
@@ -137,6 +141,7 @@ pub struct ServerConfig {
     pub no_dotfiles: bool,
     pub l2_cache_mb: u64,
     pub disk_cache_dir: Option<String>,
+    pub allowed_paths: Vec<String>,
 }
 
 impl Default for ServerConfig {
@@ -149,6 +154,7 @@ impl Default for ServerConfig {
             no_dotfiles: false,
             l2_cache_mb: 512,
             disk_cache_dir: None,
+            allowed_paths: vec![],
         }
     }
 }
@@ -318,9 +324,10 @@ pub struct MountRequest {
 async fn mount_source(
     registry: Arc<DataSourceRegistry>,
     root: Arc<String>,
+    allowed_paths: Arc<Vec<String>>,
     Json(req): Json<MountRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let filepath = validate_path(root.as_str(), &req.path)?;
+    let filepath = validate_path(root.as_str(), &allowed_paths, &req.path)?;
     let path_str = filepath.to_string_lossy().to_string();
     let ext = filepath
         .extension()
@@ -370,9 +377,10 @@ pub struct BatchRequest {
 
 async fn batch_tiles(
     root: Arc<String>,
+    allowed_paths: Arc<Vec<String>>,
     Json(req): Json<BatchRequest>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
-    let filepath = validate_path(root.as_str(), &req.filename)?;
+    let filepath = validate_path(root.as_str(), &allowed_paths, &req.filename)?;
     let path_str = filepath.to_string_lossy().to_string();
     let resampling = req
         .resampling
@@ -455,6 +463,7 @@ pub fn directory_size_bytes(path: &std::path::Path) -> Result<u64, String> {
 
 pub fn validate_path(
     root: &str,
+    allowed_paths: &[String],
     filename: &str,
 ) -> Result<std::path::PathBuf, (StatusCode, String)> {
     let p = std::path::Path::new(filename);
@@ -470,31 +479,32 @@ pub fn validate_path(
         }
     }
 
-    let filepath = std::path::Path::new(root).join(filename);
-    if !filepath.exists() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            format!("File not found: {}", filename),
-        ));
+    let bases = std::iter::once(root.to_string()).chain(allowed_paths.iter().cloned());
+    for base in bases {
+        let filepath = std::path::Path::new(&base).join(filename);
+        if filepath.exists() {
+            let base_canonical = std::path::Path::new(&base).canonicalize().map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid base directory".into(),
+                )
+            })?;
+            let file_canonical = filepath.canonicalize().map_err(|_| {
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("File not found: {}", filename),
+                )
+            })?;
+            if file_canonical.starts_with(&base_canonical) {
+                return Ok(file_canonical);
+            }
+        }
     }
 
-    let root_canonical = std::path::Path::new(root).canonicalize().map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Invalid root directory".into(),
-        )
-    })?;
-    let file_canonical = filepath.canonicalize().map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("File not found: {}", filename),
-        )
-    })?;
-    if !file_canonical.starts_with(&root_canonical) {
-        return Err((StatusCode::BAD_REQUEST, "Path traversal detected".into()));
-    }
-
-    Ok(file_canonical)
+    Err((
+        StatusCode::NOT_FOUND,
+        format!("File not found: {}", filename),
+    ))
 }
 
 pub fn is_raster_ext(ext: &str) -> bool {
@@ -624,29 +634,31 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
     spec
 }
 
-fn scan_and_auto_mount(root: &str, registry: &DataSourceRegistry) {
-    let dir = std::path::Path::new(root);
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
+fn scan_and_auto_mount(paths: &[String], registry: &DataSourceRegistry) {
+    for dir_path in paths {
+        let dir = std::path::Path::new(dir_path);
+        let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
-        }
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) if n != "openapi.json" => n.to_string(),
-            _ => continue,
         };
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .unwrap_or_default();
-        let path_str = path.to_string_lossy().to_string();
-        if let Some(source) = data_source::create_file_source(name.clone(), path_str, &ext) {
-            if let Err(e) = registry.mount(name, source) {
-                log::warn!("Failed to mount '{}': {}", path.display(), e);
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) if n != "openapi.json" => n.to_string(),
+                _ => continue,
+            };
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase())
+                .unwrap_or_default();
+            let path_str = path.to_string_lossy().to_string();
+            if let Some(source) = data_source::create_file_source(name.clone(), path_str, &ext) {
+                if let Err(e) = registry.mount(name, source) {
+                    log::warn!("Failed to mount '{}': {}", path.display(), e);
+                }
             }
         }
     }
@@ -654,7 +666,7 @@ fn scan_and_auto_mount(root: &str, registry: &DataSourceRegistry) {
 
 fn build_registry_from_config(
     file_config: &config::AppConfig,
-    root: &str,
+    scan_paths: &[String],
 ) -> Arc<DataSourceRegistry> {
     let registry = Arc::new(DataSourceRegistry::new());
 
@@ -677,7 +689,7 @@ fn build_registry_from_config(
         }
     }
 
-    scan_and_auto_mount(root, &registry);
+    scan_and_auto_mount(scan_paths, &registry);
     registry
 }
 
@@ -701,6 +713,74 @@ macro_rules! merge_opt {
     };
 }
 
+fn mime_type(path: &str) -> &str {
+    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "html" => "text/html",
+        "js" => "application/javascript",
+        "css" => "text/css",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "tif" | "tiff" => "image/tiff",
+        "geojson" => "application/geo+json",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn fallback_handler(
+    Extension(dirs): Extension<Arc<Vec<String>>>,
+    req: Request<Body>,
+) -> Response {
+    let path = req.uri().path();
+    let clean = path.trim_start_matches('/');
+
+    if clean.split('/').any(|s| s == "..") {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    for base in dirs.iter() {
+        let full = std::path::Path::new(base).join(clean);
+        if full.is_file() {
+            match tokio::fs::read(&full).await {
+                Ok(data) => {
+                    return Response::builder()
+                        .header(header::CONTENT_TYPE, mime_type(path))
+                        .status(StatusCode::OK)
+                        .body(Body::from(data))
+                        .expect("valid response");
+                }
+                Err(_) => continue,
+            }
+        } else if full.is_dir() {
+            let index = full.join("index.html");
+            if index.is_file() {
+                match tokio::fs::read(&index).await {
+                    Ok(data) => {
+                        return Response::builder()
+                            .header(header::CONTENT_TYPE, "text/html")
+                            .status(StatusCode::OK)
+                            .body(Body::from(data))
+                            .expect("valid response");
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
+    }
+
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(Body::from("Not Found"))
+        .expect("valid response")
+}
+
 // ─── 服务器启动 ───
 
 /// Create a new empty DataSourceRegistry for programmatic use
@@ -716,10 +796,17 @@ pub fn build_router(
     config: &ServerConfig,
 ) -> Router {
     let cache_arc = Arc::new(config.cache_max_age as i64);
+    let allowed_paths = Arc::new(config.allowed_paths.clone());
 
-    let svc = ServeDir::new(root.as_str()).append_index_html_on_directories(true);
+    let all_dirs: Arc<Vec<String>> = Arc::new(
+        std::iter::once(root.as_str().to_string())
+            .chain(config.allowed_paths.clone())
+            .collect(),
+    );
 
-    let mut app = Router::new().fallback_service(svc);
+    let mut app = Router::new()
+        .fallback(fallback_handler)
+        .layer(Extension(all_dirs));
 
     // ─── 健康检查 ───
 
@@ -748,7 +835,8 @@ pub fn build_router(
         post({
             let reg = registry.clone();
             let root = root.clone();
-            move |body| mount_source(reg.clone(), root.clone(), body)
+            let ap = allowed_paths.clone();
+            move |body| mount_source(reg.clone(), root.clone(), ap.clone(), body)
         }),
     );
 
@@ -798,7 +886,8 @@ pub fn build_router(
         "/api/batch-tiles",
         post({
             let root = root.clone();
-            move |body| batch_tiles(root.clone(), body)
+            let ap = allowed_paths.clone();
+            move |body| batch_tiles(root.clone(), ap.clone(), body)
         }),
     );
 
@@ -932,7 +1021,14 @@ pub fn run() {
                 ".".to_string()
             );
             let root = cli.dir.clone().unwrap_or(root_from_cli);
-            let registry = build_registry_from_config(&file_config, &root);
+            let allowed_paths = merge_opt!(
+                cli.allow_path.clone(),
+                server_cfg.and_then(|s| s.allowed_paths.clone()),
+                vec![]
+            );
+            let mut all_paths = vec![root.clone()];
+            all_paths.extend(allowed_paths);
+            let registry = build_registry_from_config(&file_config, &all_paths);
             let filenames = registry.list_names();
             let spec_value = build_dynamic_spec(&filenames);
 
@@ -992,6 +1088,11 @@ pub fn run() {
         cache_cfg.and_then(|s| s.l2_size_mb),
         512u64
     );
+    let allowed_paths = merge_opt!(
+        cli.allow_path,
+        server_cfg.and_then(|s| s.allowed_paths.clone()),
+        vec![]
+    );
 
     let server_config = ServerConfig {
         threads,
@@ -1001,6 +1102,7 @@ pub fn run() {
         no_dotfiles,
         l2_cache_mb,
         disk_cache_dir: cache_cfg.and_then(|s| s.disk_dir.clone()),
+        allowed_paths: allowed_paths.clone(),
     };
 
     // Apply cache config before any tile operations
@@ -1009,7 +1111,9 @@ pub fn run() {
         tile_cache::set_disk_cache_dir(&dir);
     }
 
-    let registry = build_registry_from_config(&file_config, &root);
+    let mut all_paths = vec![root.clone()];
+    all_paths.extend(allowed_paths);
+    let registry = build_registry_from_config(&file_config, &all_paths);
 
     let root_arc = Arc::new(root.clone());
 
@@ -1074,7 +1178,7 @@ mod tests {
     fn test_validate_path_rejects_parent_dir() {
         let (dir, _) = setup();
         let root = dir.path().to_str().unwrap();
-        let result = validate_path(root, "../etc/passwd");
+        let result = validate_path(root, &[], "../etc/passwd");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
@@ -1085,7 +1189,7 @@ mod tests {
     fn test_validate_path_rejects_absolute_path() {
         let (dir, _) = setup();
         let root = dir.path().to_str().unwrap();
-        let result = validate_path(root, "/etc/passwd");
+        let result = validate_path(root, &[], "/etc/passwd");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
@@ -1096,7 +1200,7 @@ mod tests {
     fn test_validate_path_rejects_nonexistent_file() {
         let (dir, _) = setup();
         let root = dir.path().to_str().unwrap();
-        let result = validate_path(root, "nonexistent.tif");
+        let result = validate_path(root, &[], "nonexistent.tif");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.0, StatusCode::NOT_FOUND);
@@ -1107,7 +1211,7 @@ mod tests {
         let (dir, file_path) = setup();
         let root = dir.path().to_str().unwrap();
         let filename = file_path.file_name().unwrap().to_str().unwrap();
-        let result = validate_path(root, filename);
+        let result = validate_path(root, &[], filename);
         assert!(result.is_ok());
         let canonical = result.unwrap();
         assert!(canonical.starts_with(dir.path().canonicalize().unwrap()));
@@ -1117,7 +1221,7 @@ mod tests {
     fn test_validate_path_rejects_deep_traversal() {
         let (dir, _) = setup();
         let root = dir.path().to_str().unwrap();
-        let result = validate_path(root, "subdir/../../etc/passwd");
+        let result = validate_path(root, &[], "subdir/../../etc/passwd");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
@@ -1133,8 +1237,38 @@ mod tests {
         std::fs::write(&file_path, b"dummy").unwrap();
 
         let root = dir.path().to_str().unwrap();
-        let result = validate_path(root, "nested/data.tif");
+        let result = validate_path(root, &[], "nested/data.tif");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_path_accepts_allowed_path_file() {
+        let (dir, _) = setup();
+        let outer_dir = TempDir::new().unwrap();
+        let outer_file = outer_dir.path().join("external.tif");
+        std::fs::write(&outer_file, b"dummy").unwrap();
+
+        let root = dir.path().to_str().unwrap();
+        let allowed = vec![outer_dir.path().to_string_lossy().to_string()];
+        let filename = outer_file.file_name().unwrap().to_str().unwrap();
+        let result = validate_path(root, &allowed, filename);
+        assert!(result.is_ok());
+        let canonical = result.unwrap();
+        assert!(canonical.starts_with(&outer_dir.path().canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn test_validate_path_rejects_outside_allowed_paths() {
+        let (dir, _) = setup();
+        let outer_dir = TempDir::new().unwrap();
+        let outer_file = outer_dir.path().join("external.tif");
+        std::fs::write(&outer_file, b"dummy").unwrap();
+
+        let root = dir.path().to_str().unwrap();
+        // empty allowed_paths — should not find the outer file
+        let filename = outer_file.file_name().unwrap().to_str().unwrap();
+        let result = validate_path(root, &[], filename);
+        assert!(result.is_err());
     }
 
 

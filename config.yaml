@@ -8,6 +8,9 @@ server:
   gzip: false
   no_dotfiles: false
   log_format: default
+  allowed_paths:
+    - D:/data/rasters
+    - D:/data/vectors
 sources:
 - name: example-raster
   path: ./data/raster.tif

@@ -2,6 +2,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use http_body_util::BodyExt;
 use simple_geo_server::{build_router, init_registry, ServerConfig};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -321,4 +322,222 @@ async fn test_ogc_tilejson_encoded_traversal_rejected_by_registry() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+// ─── Allowed Paths: static file serving ───
+
+#[tokio::test]
+async fn test_serve_dir_serves_file_from_allowed_path() {
+    let root = TempDir::new().unwrap();
+    let ext = TempDir::new().unwrap();
+    std::fs::write(ext.path().join("ext.txt"), b"external-content").unwrap();
+
+    let config = ServerConfig {
+        allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
+        ..Default::default()
+    };
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
+
+    let res = app
+        .oneshot(
+            Request::builder().uri("/ext.txt").body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_serve_dir_root_takes_priority() {
+    let root = TempDir::new().unwrap();
+    let ext = TempDir::new().unwrap();
+    std::fs::write(root.path().join("conflict.txt"), b"root-content").unwrap();
+    std::fs::write(ext.path().join("conflict.txt"), b"ext-content").unwrap();
+
+    let config = ServerConfig {
+        allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
+        ..Default::default()
+    };
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
+
+    let res = app
+        .oneshot(
+            Request::builder().uri("/conflict.txt").body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.starts_with(b"root-"), "expected root priority, got: {body:?}");
+}
+
+#[tokio::test]
+async fn test_serve_dir_returns_404_for_missing_file() {
+    let root = TempDir::new().unwrap();
+    let ext = TempDir::new().unwrap();
+    std::fs::write(ext.path().join("ext.txt"), b"ext").unwrap();
+
+    let config = ServerConfig {
+        allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
+        ..Default::default()
+    };
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/nonexistent.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_serve_dir_traversal_still_blocked_with_allowed_paths() {
+    let root = TempDir::new().unwrap();
+    let ext = TempDir::new().unwrap();
+
+    let config = ServerConfig {
+        allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
+        ..Default::default()
+    };
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/../welcome.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(res.status().is_client_error());
+}
+
+// ─── Allowed Paths: mount API ───
+
+#[tokio::test]
+async fn test_mount_accepts_file_in_allowed_path() {
+    let root = TempDir::new().unwrap();
+    let ext = TempDir::new().unwrap();
+    std::fs::write(ext.path().join("ext.tif"), b"dummy-tif").unwrap();
+
+    let config = ServerConfig {
+        allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
+        ..Default::default()
+    };
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mount")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "name": "ext",
+                        "path": "ext.tif"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_mount_rejects_file_outside_allowed_paths() {
+    let root = TempDir::new().unwrap();
+    let ext = TempDir::new().unwrap();
+    std::fs::write(ext.path().join("ext.tif"), b"dummy-tif").unwrap();
+
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &ServerConfig::default(),
+    );
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mount")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "name": "ext",
+                        "path": "ext.tif"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_allowed_path_traversal_mount_still_rejected() {
+    let root = TempDir::new().unwrap();
+    let ext = TempDir::new().unwrap();
+    let sub = ext.path().join("nested");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("ext.tif"), b"dummy-tif").unwrap();
+
+    let config = ServerConfig {
+        allowed_paths: vec![ext.path().to_str().unwrap().to_string()],
+        ..Default::default()
+    };
+    let app = build_router(
+        init_registry(),
+        Arc::new(root.path().to_str().unwrap().to_string()),
+        &config,
+    );
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mount")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "name": "ext",
+                        "path": "nested/../ext.tif"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
