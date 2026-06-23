@@ -33,8 +33,7 @@ pub fn get_shapefile_tile_geojson(req: &VectorTileRequest) -> Result<String, Str
             continue;
         }
         let props = sf.attributes.get(i).and_then(|a| a.clone());
-        let gj_geom = geojson::Geometry::try_from(geom)
-            .map_err(|e| format!("Geometry conversion error: {}", e))?;
+        let gj_geom = geojson::Geometry::from(geom);
         features.push(geojson::Feature {
             bbox: None,
             geometry: Some(gj_geom),
@@ -138,8 +137,7 @@ fn transform_geojson_feature(
     Ok(Some(geojson::Feature {
         bbox: None,
         geometry: Some(
-            geojson::Geometry::try_from(&geometry)
-                .map_err(|e| format!("Failed to convert back to GeoJSON: {e}"))?,
+            geojson::Geometry::from(&geometry),
         ),
         id: feature.id.clone(),
         properties: feature.properties.clone(),
@@ -156,8 +154,7 @@ pub fn get_wkt_tile_geojson(req: &VectorTileRequest) -> Result<String, String> {
         .map_err(|e| format!("Failed to convert WKT geometry: {e:?}"))?;
 
     let features = if geometry.intersects(&tile_rect) {
-        let geojson_geom = geojson::Geometry::try_from(&geometry)
-            .map_err(|e| format!("Failed to convert to GeoJSON: {e}"))?;
+        let geojson_geom = geojson::Geometry::from(&geometry);
         vec![geojson::Feature {
             bbox: None,
             geometry: Some(geojson_geom),
@@ -234,10 +231,10 @@ fn collect_kml_placemarks(
             }
         }
         Kml::Placemark(placemark) => {
-            if let Some(ref geometry) = placemark.geometry {
-                if let Ok(geo_geom) = geo_types::Geometry::<f64>::try_from(geometry.clone()) {
-                    if geo_geom.intersects(tile_rect) {
-                        let geom = geojson::Geometry::try_from(&geo_geom).unwrap();
+            if let Some(ref geometry) = placemark.geometry
+                && let Ok(geo_geom) = geo_types::Geometry::<f64>::try_from(geometry.clone())
+                    && geo_geom.intersects(tile_rect) {
+                        let geom = geojson::Geometry::from(&geo_geom);
                         let mut props = serde_json::Map::new();
                         if let Some(ref name) = placemark.name {
                             props.insert(
@@ -259,8 +256,6 @@ fn collect_kml_placemarks(
                             foreign_members: None,
                         });
                     }
-                }
-            }
         }
         _ => {}
     }
@@ -280,13 +275,7 @@ pub fn get_raster_tile_info(path: &str) -> Result<TileInfo, String> {
 
         [min_lng, min_lat, max_lng, max_lat]
     } else {
-        if let Some(extent_wgs84) =
-            crate::reproject::extent_to_wgs84(&gt, raster.width, raster.height, &raster.geo_key)
-        {
-            extent_wgs84
-        } else {
-            [0.0, 0.0, 0.0, 0.0]
-        }
+        crate::reproject::extent_to_wgs84(&gt, raster.width, raster.height, &raster.geo_key).unwrap_or([0.0, 0.0, 0.0, 0.0])
     };
 
     let max_zoom = raster.max_zoom;

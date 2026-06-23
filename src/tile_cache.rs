@@ -51,9 +51,9 @@ fn file_content_hash(path: &str) -> Result<String, String> {
 
     let head_len = CONTENT_HASH_READ_SIZE.min(file_size);
     if head_len > 0 {
-        let mut chunk = &mut buf[..head_len as usize];
+        let chunk = &mut buf[..head_len as usize];
         reader
-            .read_exact(&mut chunk)
+            .read_exact(chunk)
             .map_err(|e| format!("Hash read head: {e}"))?;
         chunk.hash(&mut hasher);
     }
@@ -63,9 +63,9 @@ fn file_content_hash(path: &str) -> Result<String, String> {
         reader
             .seek(SeekFrom::Start(tail_start))
             .map_err(|e| format!("Hash seek tail: {e}"))?;
-        let mut chunk = &mut buf[..CONTENT_HASH_READ_SIZE as usize];
+        let chunk = &mut buf[..CONTENT_HASH_READ_SIZE as usize];
         reader
-            .read_exact(&mut chunk)
+            .read_exact(chunk)
             .map_err(|e| format!("Hash read tail: {e}"))?;
         chunk.hash(&mut hasher);
     }
@@ -154,11 +154,10 @@ impl MemCache {
                 .iter()
                 .min_by_key(|(_, e)| e.last_access)
                 .map(|(k, _)| k.clone());
-            if let Some(k) = oldest_key {
-                if let Some(removed) = self.entries.remove(&k) {
+            if let Some(k) = oldest_key
+                && let Some(removed) = self.entries.remove(&k) {
                     self.current_bytes = self.current_bytes.saturating_sub(removed.size);
                 }
-            }
         }
 
         self.current_bytes += size;
@@ -181,6 +180,7 @@ impl MemCache {
         self.current_bytes
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -315,7 +315,7 @@ pub fn set_disk_cache_max_bytes(max_bytes: u64) {
 
 pub fn evict_disk_cache_if_needed() {
     let count = DISK_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    if count % EVICTION_CHECK_INTERVAL != 0 {
+    if !count.is_multiple_of(EVICTION_CHECK_INTERVAL) {
         return;
     }
     let max_bytes = DISK_CACHE_MAX.load(Ordering::Relaxed);
@@ -330,13 +330,11 @@ pub fn evict_disk_cache_if_needed() {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() {
-                if let Ok(metadata) = path.metadata() {
-                    if let Ok(mtime) = metadata.modified() {
+            if path.is_file()
+                && let Ok(metadata) = path.metadata()
+                    && let Ok(mtime) = metadata.modified() {
                         files.push((path, mtime));
                     }
-                }
-            }
         }
     }
     files.sort_by_key(|(_, mtime)| *mtime);

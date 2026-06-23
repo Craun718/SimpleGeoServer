@@ -92,6 +92,7 @@ impl DataSourceRegistry {
             .unwrap_or(false)
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.sources.read().map(|s| s.len()).unwrap_or(0)
     }

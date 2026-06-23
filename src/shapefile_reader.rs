@@ -141,8 +141,8 @@ fn load_and_cache_shapefile(path: &str) -> Result<Arc<CachedShapefile>, String> 
 fn parse_prj_file(path: &std::path::Path) -> Option<crate::reproject::KnownCrs> {
     let content = std::fs::read_to_string(path).ok()?;
 
-    if let Some(cap) = content.split("AUTHORITY").nth(1) {
-        if let Some(epsg_str) = cap.split('"').nth(3) {
+    if let Some(cap) = content.split("AUTHORITY").nth(1)
+        && let Some(epsg_str) = cap.split('"').nth(3) {
             if epsg_str == "900913" {
                 return Some(crate::reproject::KnownCrs::WebMercator);
             }
@@ -150,7 +150,6 @@ fn parse_prj_file(path: &std::path::Path) -> Option<crate::reproject::KnownCrs> 
                 return parse_epsg_code(code);
             }
         }
-    }
     if content.contains("4326") || content.contains("WGS 84") || content.contains("GCS_WGS_1984") {
         return Some(crate::reproject::KnownCrs::Wgs84);
     }

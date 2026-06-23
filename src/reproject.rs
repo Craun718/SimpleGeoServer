@@ -28,6 +28,7 @@ impl KnownCrs {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct GeoKeyInfo {
     pub model_type: Option<u16>,
     pub projected_type: Option<u16>,
@@ -40,21 +41,6 @@ pub struct GeoKeyInfo {
     pub proj_coord_trans: Option<u16>,
 }
 
-impl Default for GeoKeyInfo {
-    fn default() -> Self {
-        Self {
-            model_type: None,
-            projected_type: None,
-            geographic_type: None,
-            proj_nat_origin_long: None,
-            proj_nat_origin_lat: None,
-            proj_false_easting: None,
-            proj_false_northing: None,
-            proj_scale_at_nat_origin: None,
-            proj_coord_trans: None,
-        }
-    }
-}
 
 // ─── Geodesy Engine ───
 
@@ -245,11 +231,10 @@ pub fn parse_known_crs(name: &str) -> Option<KnownCrs> {
         let num_part = compact
             .trim_start_matches("EPSG:")
             .trim_start_matches("EPSG");
-        if let Ok(code) = num_part.parse::<u16>() {
-            if crs_definitions::from_code(code).is_some() {
+        if let Ok(code) = num_part.parse::<u16>()
+            && crs_definitions::from_code(code).is_some() {
                 return Some(KnownCrs::Epsg(code));
             }
-        }
     }
 
     None
@@ -392,9 +377,9 @@ pub fn extent_to_wgs84(
         }
     }
 
-    if geo_key.proj_coord_trans == Some(1) {
-        if let Some(proj4_str) = proj4_from_tm_params(geo_key) {
-            if let Ok(op_str) = geodesy::authoring::parse_proj(&proj4_str) {
+    if geo_key.proj_coord_trans == Some(1)
+        && let Some(proj4_str) = proj4_from_tm_params(geo_key)
+            && let Ok(op_str) = geodesy::authoring::parse_proj(&proj4_str) {
                 let mut engine = GEODESY.lock().unwrap();
                 let mut wgs_corners = Vec::new();
                 for &(x, y) in &corners {
@@ -412,8 +397,6 @@ pub fn extent_to_wgs84(
                     ]));
                 }
             }
-        }
-    }
 
     if geographic_range(&corners) {
         return Some(sort_extent(&corners));

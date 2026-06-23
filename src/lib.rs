@@ -29,6 +29,7 @@ where
 }
 
 #[derive(Deserialize)]
+#[derive(Default)]
 pub struct TileQueryParams {
     resampling: Option<String>,
     stretch: Option<String>,
@@ -39,18 +40,6 @@ pub struct TileQueryParams {
     bands: Option<Vec<u32>>,
 }
 
-impl Default for TileQueryParams {
-    fn default() -> Self {
-        Self {
-            resampling: None,
-            stretch: None,
-            std_dev_factor: None,
-            min_percent: None,
-            max_percent: None,
-            bands: None,
-        }
-    }
-}
 
 pub mod batch_render;
 pub mod config;
@@ -587,14 +576,13 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
             // Customize the operation for this concrete file
             if let Some(get_op) = item.get_mut("get") {
                 // Remove filename from parameters
-                if let Some(params) = get_op.get_mut("parameters") {
-                    if let Some(arr) = params.as_array_mut() {
+                if let Some(params) = get_op.get_mut("parameters")
+                    && let Some(arr) = params.as_array_mut() {
                         arr.retain(|p| {
                             p.get("name")
                                 != Some(&serde_json::Value::String("filename".to_string()))
                         });
                     }
-                }
 
                 // Set unique operationId
                 let base_op_id = get_op
@@ -653,11 +641,10 @@ fn scan_and_auto_mount(paths: &[String], registry: &DataSourceRegistry) {
                 .map(|e| e.to_lowercase())
                 .unwrap_or_default();
             let path_str = path.to_string_lossy().to_string();
-            if let Some(source) = data_source::create_file_source(name.clone(), path_str, &ext) {
-                if let Err(e) = registry.mount(name, source) {
+            if let Some(source) = data_source::create_file_source(name.clone(), path_str, &ext)
+                && let Err(e) = registry.mount(name, source) {
                     log::warn!("Failed to mount '{}': {}", path.display(), e);
                 }
-            }
         }
     }
 }

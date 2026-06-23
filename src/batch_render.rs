@@ -37,7 +37,7 @@ pub fn render_tiles_parallel(
     let results: std::sync::Mutex<Vec<Option<Result<BatchTileResult, String>>>> =
         std::sync::Mutex::new((0..n_results).map(|_| None).collect());
 
-    let chunk_size = (n_results + n_workers - 1) / n_workers;
+    let chunk_size = n_results.div_ceil(n_workers);
 
     std::thread::scope(|s| {
         for chunk_idx in 0..n_workers {

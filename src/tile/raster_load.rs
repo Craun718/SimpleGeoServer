@@ -37,6 +37,7 @@ pub fn select_ifd_for_zoom(raster: &super::types::CachedRaster, z: u32) -> usize
     best_idx
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn read_raster_region(
     path: &str,
     ovr_path: Option<&str>,
@@ -59,14 +60,13 @@ pub fn read_raster_region(
         .with_limits(Limits::unlimited());
 
     if ifd.external {
-        if let Some(ptr) = ifd.ifd_ptr {
-            if let Ok(dir) = decoder.read_directory(tiff::tags::IfdPointer(ptr)) {
+        if let Some(ptr) = ifd.ifd_ptr
+            && let Ok(dir) = decoder.read_directory(tiff::tags::IfdPointer(ptr)) {
                 decoder.read_directory_tags(&dir);
             }
-        }
-    } else if ifd.index > 0 {
-        if let Ok(sub_val) = decoder.get_tag(tiff::tags::Tag::SubIfd) {
-            if let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
+    } else if ifd.index > 0
+        && let Ok(sub_val) = decoder.get_tag(tiff::tags::Tag::SubIfd)
+            && let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
                 let sub_idx = ifd.index - 1;
                 if sub_idx < ifd_ptrs.len() {
                     let ptr = ifd_ptrs[sub_idx];
@@ -75,8 +75,6 @@ pub fn read_raster_region(
                     }
                 }
             }
-        }
-    }
 
     read_raster_region_from_decoder(
         &mut decoder,
@@ -90,6 +88,7 @@ pub fn read_raster_region(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn read_raster_region_from_decoder(
     decoder: &mut Decoder<BufReader<File>>,
     ifd: &super::types::IfdInfo,
@@ -100,8 +99,8 @@ pub fn read_raster_region_from_decoder(
     bands: usize,
     step: u32,
 ) -> Result<Vec<f64>, String> {
-    let out_h = (height + step - 1) / step;
-    let out_w = (width + step - 1) / step;
+    let out_h = height.div_ceil(step);
+    let out_w = width.div_ceil(step);
     let total_pixels = out_w as usize * out_h as usize;
     let mut result = vec![0.0f64; total_pixels * bands];
 

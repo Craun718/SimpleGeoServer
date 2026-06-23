@@ -28,7 +28,7 @@ impl RasterCacheInner {
 
     fn get(&mut self, path: &str) -> Option<&Arc<CachedRaster>> {
         if self.map.contains_key(path) {
-            let _ = self.touch(path);
+            self.touch(path);
             self.map.get(path)
         } else {
             None
@@ -77,8 +77,8 @@ fn find_ovr_file(tif_path: &str) -> Option<String> {
 
 fn read_geo_transform_tile(path: &str) -> [f64; 6] {
     let tfw_path = std::path::Path::new(path).with_extension("tfw");
-    if tfw_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&tfw_path) {
+    if tfw_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&tfw_path) {
             let values: Vec<f64> = content
                 .lines()
                 .filter_map(|l| l.trim().parse::<f64>().ok())
@@ -89,19 +89,14 @@ fn read_geo_transform_tile(path: &str) -> [f64; 6] {
                 ];
             }
         }
-    }
 
-    if let Ok(file) = File::open(path) {
-        if let Ok(mut decoder) = Decoder::new(BufReader::new(file)) {
-            if let Ok(tiepoint) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelTiepointTag) {
-                if let Ok(scale) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelPixelScaleTag) {
-                    if tiepoint.len() >= 6 && scale.len() >= 3 {
+    if let Ok(file) = File::open(path)
+        && let Ok(mut decoder) = Decoder::new(BufReader::new(file))
+            && let Ok(tiepoint) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelTiepointTag)
+                && let Ok(scale) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelPixelScaleTag)
+                    && tiepoint.len() >= 6 && scale.len() >= 3 {
                         return [tiepoint[3], scale[0], 0.0, tiepoint[4], 0.0, -scale[1]];
                     }
-                }
-            }
-        }
-    }
 
     [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
 }
@@ -244,7 +239,7 @@ pub fn open_raster_metadata(path: &str) -> Result<RasterFileInfo, String> {
     };
     let cpr = match chunk_type {
         ChunkType::Strip => 1u32,
-        ChunkType::Tile => (width + chunk_w - 1) / chunk_w,
+        ChunkType::Tile => width.div_ceil(chunk_w),
     };
 
     let interleave = {
@@ -408,7 +403,7 @@ pub fn load_and_cache_raster_with_progress(
     };
     let cpr = match chunk_type {
         ChunkType::Strip => 1u32,
-        ChunkType::Tile => (width + chunk_w - 1) / chunk_w,
+        ChunkType::Tile => width.div_ceil(chunk_w),
     };
 
     let interleave = {
@@ -706,8 +701,8 @@ pub fn load_and_cache_raster_with_progress(
         .map_err(|e| format!("Failed to create TIFF decoder: {}", e))?;
 
     let mut all_ifds = vec![base_ifd];
-    if let Ok(sub_val) = decoder2.get_tag(tiff::tags::Tag::SubIfd) {
-        if let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
+    if let Ok(sub_val) = decoder2.get_tag(tiff::tags::Tag::SubIfd)
+        && let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
             for (i, ptr) in ifd_ptrs.iter().enumerate() {
                 if let Ok(dir) = decoder2.read_directory(*ptr) {
                     let mut sub_reader = decoder2.read_directory_tags(&dir);
@@ -717,7 +712,7 @@ pub fn load_and_cache_raster_with_progress(
                     ) {
                         let sub_cpr = match chunk_type {
                             ChunkType::Strip => 1u32,
-                            ChunkType::Tile => (sub_w + chunk_w - 1) / chunk_w,
+                            ChunkType::Tile => sub_w.div_ceil(chunk_w),
                         };
                         log::info!("Found sub-IFD {}: {}x{}", i, sub_w, sub_h);
                         all_ifds.push(IfdInfo {
@@ -737,7 +732,6 @@ pub fn load_and_cache_raster_with_progress(
                 }
             }
         }
-    }
 
     let ovr_path = find_ovr_file(path);
     if let Some(ref ovr_path) = ovr_path {

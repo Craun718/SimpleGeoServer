@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ServerSection {
     pub port: Option<u16>,
     pub address: Option<String>,
@@ -16,22 +17,6 @@ pub struct ServerSection {
     pub allowed_paths: Option<Vec<String>>,
 }
 
-impl Default for ServerSection {
-    fn default() -> Self {
-        Self {
-            port: None,
-            address: None,
-            threads: None,
-            root: None,
-            cache_max_age: None,
-            cors: None,
-            gzip: None,
-            no_dotfiles: None,
-            log_format: None,
-            allowed_paths: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceEntry {

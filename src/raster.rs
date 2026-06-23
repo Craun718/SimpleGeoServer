@@ -91,11 +91,11 @@ pub fn crs_string_from_geo_key(geo_key: &crate::reproject::GeoKeyInfo) -> String
 
 fn crs_name_from_geo_key(geo_key: &crate::reproject::GeoKeyInfo) -> Option<String> {
     match geo_key.model_type? {
-        t if t == 1 => {
+        1 => {
             let epsg = geo_key.projected_type?;
             crs_name_from_epsg(epsg).map(|s| s.to_string())
         }
-        t if t == 2 => {
+        2 => {
             let epsg = geo_key.geographic_type?;
             crs_name_from_epsg(epsg).map(|s| s.to_string())
         }

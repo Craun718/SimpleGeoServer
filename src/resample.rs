@@ -13,6 +13,7 @@ pub enum ResamplingMode {
 }
 
 impl ResamplingMode {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "nearest" | "nearest-neighbor" => ResamplingMode::NearestNeighbor,
@@ -45,6 +46,7 @@ pub enum StretchMethod {
 }
 
 impl StretchMethod {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "percentile" => StretchMethod::Percentile,
@@ -139,6 +141,7 @@ pub fn sample_bicubic(
     let fy = row - iy as f64;
 
     let mut cols = [0f64; 4];
+    #[allow(clippy::needless_range_loop)]
     for cy in 0..4 {
         let py = (iy + cy as i64 - 1).clamp(0, h as i64 - 1) as usize;
         let p0 = data[(py * w + (ix - 1).clamp(0, w as i64 - 1) as usize) * bands + band];

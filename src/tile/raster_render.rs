@@ -16,6 +16,7 @@ pub fn render_raster_tile(
     render_raster_tile_ex(raster, z, x, y, size, bands, None, None, false)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_raster_tile_ex(
     raster: &CachedRaster,
     z: u32,
@@ -140,8 +141,8 @@ pub fn render_raster_tile_ex(
     } else {
         1
     };
-    let read_w = (src_w + step - 1) / step;
-    let read_h = (src_h + step - 1) / step;
+    let read_w = src_w.div_ceil(step);
+    let read_h = src_h.div_ceil(step);
 
     let region_data = if src_w >= 1 && src_h >= 1 {
         read_raster_region(
@@ -501,8 +502,8 @@ pub fn render_map_bbox(
     } else {
         1
     };
-    let read_w = (src_w + step - 1) / step;
-    let read_h = (src_h + step - 1) / step;
+    let read_w = src_w.div_ceil(step);
+    let read_h = src_h.div_ceil(step);
 
     let region_data = if src_w >= 1 && src_h >= 1 {
         read_raster_region(
@@ -660,6 +661,7 @@ pub fn render_map_bbox(
     Ok(png_bytes)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_raster_tile_cpu(
     raster: &CachedRaster,
     z: u32,
@@ -692,6 +694,7 @@ pub fn render_raster_tile_cpu(
     Ok((png_bytes, rendered))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_single_tile(
     raster: &CachedRaster,
     z: u32,
@@ -715,7 +718,7 @@ pub fn render_single_tile(
             stretch,
             true,
         )?,
-        "png" | _ => render_raster_tile_ex(
+        _ => render_raster_tile_ex(
             raster,
             z,
             x,
@@ -730,6 +733,7 @@ pub fn render_single_tile(
     Ok((data, rendered, format.to_string()))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_raster_tile_cpu_rgba(
     raster: &CachedRaster,
     z: u32,
@@ -766,8 +770,8 @@ pub(crate) fn render_raster_tile_cpu_rgba(
     let nc_span_x = nc_se.0 - nc_sw.0;
     let nc_span_y = nc_nw.1 - nc_sw.1;
 
-    let read_w_u = ((src_w + step - 1) / step) as usize;
-    let read_h_u = ((src_h + step - 1) / step) as usize;
+    let read_w_u = src_w.div_ceil(step) as usize;
+    let read_h_u = src_h.div_ceil(step) as usize;
 
     let region_data = if src_w >= 1 && src_h >= 1 {
         read_raster_region(

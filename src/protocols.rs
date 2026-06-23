@@ -114,6 +114,7 @@ fn ows_exception_xml(code: &str, text: &str) -> Response {
         .into_response()
 }
 
+#[allow(clippy::result_large_err)]
 fn file_info(
     registry: &DataSourceRegistry,
     filename: &str,

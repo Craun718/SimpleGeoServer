@@ -60,8 +60,8 @@ pub struct RasterBlockIterator {
 #[allow(dead_code)]
 impl RasterBlockIterator {
     pub fn new(ifd: IfdInfo, config: RasterBlockConfig, bands: usize) -> Self {
-        let blocks_x = (ifd.width + config.block_width - 1) / config.block_width;
-        let blocks_y = (ifd.height + config.block_height - 1) / config.block_height;
+        let blocks_x = ifd.width.div_ceil(config.block_width);
+        let blocks_y = ifd.height.div_ceil(config.block_height);
         Self {
             ifd,
             config,
@@ -84,22 +84,20 @@ impl RasterBlockIterator {
                 Err(e) => return Some(Err(format!("Failed to open {}: {e}", self.ifd.file_path))),
             };
             let mut decoder = match Decoder::new(BufReader::new(file))
-                .map_err(|e| format!("Failed to create decoder: {e}"))
-                .and_then(|d| Ok(d.with_limits(Limits::unlimited())))
+                .map_err(|e| format!("Failed to create decoder: {e}")).map(|d| d.with_limits(Limits::unlimited()))
             {
                 Ok(d) => d,
                 Err(e) => return Some(Err(e)),
             };
 
             if self.ifd.external {
-                if let Some(ptr) = self.ifd.ifd_ptr {
-                    if let Ok(dir) = decoder.read_directory(tiff::tags::IfdPointer(ptr)) {
+                if let Some(ptr) = self.ifd.ifd_ptr
+                    && let Ok(dir) = decoder.read_directory(tiff::tags::IfdPointer(ptr)) {
                         decoder.read_directory_tags(&dir);
                     }
-                }
-            } else if self.ifd.index > 0 {
-                if let Ok(sub_val) = decoder.get_tag(tiff::tags::Tag::SubIfd) {
-                    if let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
+            } else if self.ifd.index > 0
+                && let Ok(sub_val) = decoder.get_tag(tiff::tags::Tag::SubIfd)
+                    && let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
                         let sub_idx = self.ifd.index - 1;
                         if sub_idx < ifd_ptrs.len() {
                             let ptr = ifd_ptrs[sub_idx];
@@ -108,8 +106,6 @@ impl RasterBlockIterator {
                             }
                         }
                     }
-                }
-            }
 
             self.decoder = Some(decoder);
         }

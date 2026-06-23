@@ -64,6 +64,7 @@ impl RenderFarm {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn render_tile(
         self: &Arc<Self>,
         path: String,
@@ -280,8 +281,8 @@ fn render_tile_sync(
     } else {
         1
     };
-    let read_w = (src_w + step - 1) / step;
-    let read_h = (src_h + step - 1) / step;
+    let read_w = src_w.div_ceil(step);
+    let read_h = src_h.div_ceil(step);
 
     let (u0, u1, v0, v1) = if use_native {
         let nw_pt = crate::reproject::wgs84_to_native_crs(

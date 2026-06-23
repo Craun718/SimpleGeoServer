@@ -108,7 +108,7 @@ pub fn parse_ovr_ifd_offsets(
 
         let cpr = match chunk_type {
             ChunkType::Strip => 1u32,
-            ChunkType::Tile => (width + chunk_w - 1) / chunk_w,
+            ChunkType::Tile => width.div_ceil(chunk_w),
         };
 
         ifds.push(super::types::IfdInfo {
