@@ -43,10 +43,9 @@ fn main() {
         for entry in arr {
             let code = entry.get("code").and_then(|v| v.as_str());
             let name = entry.get("name").and_then(|v| v.as_str());
-            if let (Some(c), Some(n)) = (code, name) {
-                if let Ok(code_num) = c.parse::<u16>() {
-                    entries.push((code_num, n.to_string()));
-                }
+            if let (Some(c), Some(n)) = (code, name)
+                && let Ok(code_num) = c.parse::<u16>() {
+                entries.push((code_num, n.to_string()));
             }
         }
     }
