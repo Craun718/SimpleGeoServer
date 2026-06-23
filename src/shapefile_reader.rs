@@ -142,14 +142,15 @@ fn parse_prj_file(path: &std::path::Path) -> Option<crate::reproject::KnownCrs> 
     let content = std::fs::read_to_string(path).ok()?;
 
     if let Some(cap) = content.split("AUTHORITY").nth(1)
-        && let Some(epsg_str) = cap.split('"').nth(3) {
-            if epsg_str == "900913" {
-                return Some(crate::reproject::KnownCrs::WebMercator);
-            }
-            if let Ok(code) = epsg_str.parse::<u16>() {
-                return parse_epsg_code(code);
-            }
+        && let Some(epsg_str) = cap.split('"').nth(3)
+    {
+        if epsg_str == "900913" {
+            return Some(crate::reproject::KnownCrs::WebMercator);
         }
+        if let Ok(code) = epsg_str.parse::<u16>() {
+            return parse_epsg_code(code);
+        }
+    }
     if content.contains("4326") || content.contains("WGS 84") || content.contains("GCS_WGS_1984") {
         return Some(crate::reproject::KnownCrs::Wgs84);
     }

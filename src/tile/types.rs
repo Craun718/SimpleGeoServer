@@ -84,7 +84,8 @@ impl RasterBlockIterator {
                 Err(e) => return Some(Err(format!("Failed to open {}: {e}", self.ifd.file_path))),
             };
             let mut decoder = match Decoder::new(BufReader::new(file))
-                .map_err(|e| format!("Failed to create decoder: {e}")).map(|d| d.with_limits(Limits::unlimited()))
+                .map_err(|e| format!("Failed to create decoder: {e}"))
+                .map(|d| d.with_limits(Limits::unlimited()))
             {
                 Ok(d) => d,
                 Err(e) => return Some(Err(e)),
@@ -92,20 +93,22 @@ impl RasterBlockIterator {
 
             if self.ifd.external {
                 if let Some(ptr) = self.ifd.ifd_ptr
-                    && let Ok(dir) = decoder.read_directory(tiff::tags::IfdPointer(ptr)) {
-                        decoder.read_directory_tags(&dir);
-                    }
+                    && let Ok(dir) = decoder.read_directory(tiff::tags::IfdPointer(ptr))
+                {
+                    decoder.read_directory_tags(&dir);
+                }
             } else if self.ifd.index > 0
                 && let Ok(sub_val) = decoder.get_tag(tiff::tags::Tag::SubIfd)
-                    && let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
-                        let sub_idx = self.ifd.index - 1;
-                        if sub_idx < ifd_ptrs.len() {
-                            let ptr = ifd_ptrs[sub_idx];
-                            if let Ok(dir) = decoder.read_directory(ptr) {
-                                decoder.read_directory_tags(&dir);
-                            }
-                        }
+                && let Ok(ifd_ptrs) = sub_val.into_ifd_vec()
+            {
+                let sub_idx = self.ifd.index - 1;
+                if sub_idx < ifd_ptrs.len() {
+                    let ptr = ifd_ptrs[sub_idx];
+                    if let Ok(dir) = decoder.read_directory(ptr) {
+                        decoder.read_directory_tags(&dir);
                     }
+                }
+            }
 
             self.decoder = Some(decoder);
         }

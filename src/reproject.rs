@@ -27,8 +27,7 @@ impl KnownCrs {
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct GeoKeyInfo {
     pub model_type: Option<u16>,
     pub projected_type: Option<u16>,
@@ -40,7 +39,6 @@ pub struct GeoKeyInfo {
     pub proj_scale_at_nat_origin: Option<f64>,
     pub proj_coord_trans: Option<u16>,
 }
-
 
 // ─── Geodesy Engine ───
 
@@ -232,9 +230,10 @@ pub fn parse_known_crs(name: &str) -> Option<KnownCrs> {
             .trim_start_matches("EPSG:")
             .trim_start_matches("EPSG");
         if let Ok(code) = num_part.parse::<u16>()
-            && crs_definitions::from_code(code).is_some() {
-                return Some(KnownCrs::Epsg(code));
-            }
+            && crs_definitions::from_code(code).is_some()
+        {
+            return Some(KnownCrs::Epsg(code));
+        }
     }
 
     None
@@ -379,24 +378,25 @@ pub fn extent_to_wgs84(
 
     if geo_key.proj_coord_trans == Some(1)
         && let Some(proj4_str) = proj4_from_tm_params(geo_key)
-            && let Ok(op_str) = geodesy::authoring::parse_proj(&proj4_str) {
-                let mut engine = GEODESY.lock().unwrap();
-                let mut wgs_corners = Vec::new();
-                for &(x, y) in &corners {
-                    let mut coords = [Coor2D::raw(x, y)];
-                    engine.apply(&op_str, Inv, &mut coords).ok()?;
-                    let (lng_rad, lat_rad) = coords[0].xy();
-                    wgs_corners.push((lng_rad.to_degrees(), lat_rad.to_degrees()));
-                }
-                if wgs_corners.len() == 4 {
-                    return Some(sort_extent(&[
-                        wgs_corners[0],
-                        wgs_corners[1],
-                        wgs_corners[2],
-                        wgs_corners[3],
-                    ]));
-                }
-            }
+        && let Ok(op_str) = geodesy::authoring::parse_proj(&proj4_str)
+    {
+        let mut engine = GEODESY.lock().unwrap();
+        let mut wgs_corners = Vec::new();
+        for &(x, y) in &corners {
+            let mut coords = [Coor2D::raw(x, y)];
+            engine.apply(&op_str, Inv, &mut coords).ok()?;
+            let (lng_rad, lat_rad) = coords[0].xy();
+            wgs_corners.push((lng_rad.to_degrees(), lat_rad.to_degrees()));
+        }
+        if wgs_corners.len() == 4 {
+            return Some(sort_extent(&[
+                wgs_corners[0],
+                wgs_corners[1],
+                wgs_corners[2],
+                wgs_corners[3],
+            ]));
+        }
+    }
 
     if geographic_range(&corners) {
         return Some(sort_extent(&corners));

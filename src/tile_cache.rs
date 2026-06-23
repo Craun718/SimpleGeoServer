@@ -155,9 +155,10 @@ impl MemCache {
                 .min_by_key(|(_, e)| e.last_access)
                 .map(|(k, _)| k.clone());
             if let Some(k) = oldest_key
-                && let Some(removed) = self.entries.remove(&k) {
-                    self.current_bytes = self.current_bytes.saturating_sub(removed.size);
-                }
+                && let Some(removed) = self.entries.remove(&k)
+            {
+                self.current_bytes = self.current_bytes.saturating_sub(removed.size);
+            }
         }
 
         self.current_bytes += size;
@@ -332,9 +333,10 @@ pub fn evict_disk_cache_if_needed() {
             let path = entry.path();
             if path.is_file()
                 && let Ok(metadata) = path.metadata()
-                    && let Ok(mtime) = metadata.modified() {
-                        files.push((path, mtime));
-                    }
+                && let Ok(mtime) = metadata.modified()
+            {
+                files.push((path, mtime));
+            }
         }
     }
     files.sort_by_key(|(_, mtime)| *mtime);

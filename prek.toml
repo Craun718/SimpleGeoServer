@@ -14,7 +14,7 @@ repo = "local"
 hooks = [
   # --- commit ---
   { id = "cargo-fmt", name = "Cargo fmt", language = "system",
-    entry = "cargo fmt -- --check", pass_filenames = false,
+    entry = "cargo fmt", pass_filenames = false,
     types_or = ["rust"] },
   { id = "cargo-check", name = "Cargo check", language = "system",
     entry = "cargo check --all-targets", pass_filenames = false,

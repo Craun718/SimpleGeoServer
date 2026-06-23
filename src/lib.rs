@@ -28,8 +28,7 @@ where
     Ok(s.map(|s| s.split(',').filter_map(|v| v.trim().parse().ok()).collect()))
 }
 
-#[derive(Deserialize)]
-#[derive(Default)]
+#[derive(Deserialize, Default)]
 pub struct TileQueryParams {
     resampling: Option<String>,
     stretch: Option<String>,
@@ -39,7 +38,6 @@ pub struct TileQueryParams {
     #[serde(default, deserialize_with = "deserialize_bands")]
     bands: Option<Vec<u32>>,
 }
-
 
 pub mod batch_render;
 pub mod config;
@@ -577,12 +575,12 @@ fn build_dynamic_spec(geo_files: &[String]) -> serde_json::Value {
             if let Some(get_op) = item.get_mut("get") {
                 // Remove filename from parameters
                 if let Some(params) = get_op.get_mut("parameters")
-                    && let Some(arr) = params.as_array_mut() {
-                        arr.retain(|p| {
-                            p.get("name")
-                                != Some(&serde_json::Value::String("filename".to_string()))
-                        });
-                    }
+                    && let Some(arr) = params.as_array_mut()
+                {
+                    arr.retain(|p| {
+                        p.get("name") != Some(&serde_json::Value::String("filename".to_string()))
+                    });
+                }
 
                 // Set unique operationId
                 let base_op_id = get_op
@@ -642,9 +640,10 @@ fn scan_and_auto_mount(paths: &[String], registry: &DataSourceRegistry) {
                 .unwrap_or_default();
             let path_str = path.to_string_lossy().to_string();
             if let Some(source) = data_source::create_file_source(name.clone(), path_str, &ext)
-                && let Err(e) = registry.mount(name, source) {
-                    log::warn!("Failed to mount '{}': {}", path.display(), e);
-                }
+                && let Err(e) = registry.mount(name, source)
+            {
+                log::warn!("Failed to mount '{}': {}", path.display(), e);
+            }
         }
     }
 }

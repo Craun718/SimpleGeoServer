@@ -78,25 +78,28 @@ fn find_ovr_file(tif_path: &str) -> Option<String> {
 fn read_geo_transform_tile(path: &str) -> [f64; 6] {
     let tfw_path = std::path::Path::new(path).with_extension("tfw");
     if tfw_path.exists()
-        && let Ok(content) = std::fs::read_to_string(&tfw_path) {
-            let values: Vec<f64> = content
-                .lines()
-                .filter_map(|l| l.trim().parse::<f64>().ok())
-                .collect();
-            if values.len() == 6 {
-                return [
-                    values[4], values[0], values[1], values[5], values[2], values[3],
-                ];
-            }
+        && let Ok(content) = std::fs::read_to_string(&tfw_path)
+    {
+        let values: Vec<f64> = content
+            .lines()
+            .filter_map(|l| l.trim().parse::<f64>().ok())
+            .collect();
+        if values.len() == 6 {
+            return [
+                values[4], values[0], values[1], values[5], values[2], values[3],
+            ];
         }
+    }
 
     if let Ok(file) = File::open(path)
         && let Ok(mut decoder) = Decoder::new(BufReader::new(file))
-            && let Ok(tiepoint) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelTiepointTag)
-                && let Ok(scale) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelPixelScaleTag)
-                    && tiepoint.len() >= 6 && scale.len() >= 3 {
-                        return [tiepoint[3], scale[0], 0.0, tiepoint[4], 0.0, -scale[1]];
-                    }
+        && let Ok(tiepoint) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelTiepointTag)
+        && let Ok(scale) = decoder.get_tag_f64_vec(tiff::tags::Tag::ModelPixelScaleTag)
+        && tiepoint.len() >= 6
+        && scale.len() >= 3
+    {
+        return [tiepoint[3], scale[0], 0.0, tiepoint[4], 0.0, -scale[1]];
+    }
 
     [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
 }
@@ -702,36 +705,37 @@ pub fn load_and_cache_raster_with_progress(
 
     let mut all_ifds = vec![base_ifd];
     if let Ok(sub_val) = decoder2.get_tag(tiff::tags::Tag::SubIfd)
-        && let Ok(ifd_ptrs) = sub_val.into_ifd_vec() {
-            for (i, ptr) in ifd_ptrs.iter().enumerate() {
-                if let Ok(dir) = decoder2.read_directory(*ptr) {
-                    let mut sub_reader = decoder2.read_directory_tags(&dir);
-                    if let (Ok(Some(sub_w)), Ok(Some(sub_h))) = (
-                        sub_reader.find_tag_unsigned::<u32>(tiff::tags::Tag::ImageWidth),
-                        sub_reader.find_tag_unsigned::<u32>(tiff::tags::Tag::ImageLength),
-                    ) {
-                        let sub_cpr = match chunk_type {
-                            ChunkType::Strip => 1u32,
-                            ChunkType::Tile => sub_w.div_ceil(chunk_w),
-                        };
-                        log::info!("Found sub-IFD {}: {}x{}", i, sub_w, sub_h);
-                        all_ifds.push(IfdInfo {
-                            index: all_ifds.len(),
-                            width: sub_w,
-                            height: sub_h,
-                            chunk_type,
-                            chunk_width: chunk_w,
-                            chunk_length: chunk_h,
-                            chunks_per_row: sub_cpr,
-                            external: false,
-                            ifd_ptr: None,
-                            interleave,
-                            file_path: path.to_string(),
-                        });
-                    }
+        && let Ok(ifd_ptrs) = sub_val.into_ifd_vec()
+    {
+        for (i, ptr) in ifd_ptrs.iter().enumerate() {
+            if let Ok(dir) = decoder2.read_directory(*ptr) {
+                let mut sub_reader = decoder2.read_directory_tags(&dir);
+                if let (Ok(Some(sub_w)), Ok(Some(sub_h))) = (
+                    sub_reader.find_tag_unsigned::<u32>(tiff::tags::Tag::ImageWidth),
+                    sub_reader.find_tag_unsigned::<u32>(tiff::tags::Tag::ImageLength),
+                ) {
+                    let sub_cpr = match chunk_type {
+                        ChunkType::Strip => 1u32,
+                        ChunkType::Tile => sub_w.div_ceil(chunk_w),
+                    };
+                    log::info!("Found sub-IFD {}: {}x{}", i, sub_w, sub_h);
+                    all_ifds.push(IfdInfo {
+                        index: all_ifds.len(),
+                        width: sub_w,
+                        height: sub_h,
+                        chunk_type,
+                        chunk_width: chunk_w,
+                        chunk_length: chunk_h,
+                        chunks_per_row: sub_cpr,
+                        external: false,
+                        ifd_ptr: None,
+                        interleave,
+                        file_path: path.to_string(),
+                    });
                 }
             }
         }
+    }
 
     let ovr_path = find_ovr_file(path);
     if let Some(ref ovr_path) = ovr_path {
