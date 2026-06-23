@@ -228,8 +228,8 @@ fn collect_kml_placemarks(
                 collect_kml_placemarks(element, tile_rect, features);
             }
         }
-        Kml::Folder { elements, .. } => {
-            for element in elements {
+        Kml::Folder(folder) => {
+            for element in &folder.elements {
                 collect_kml_placemarks(element, tile_rect, features);
             }
         }

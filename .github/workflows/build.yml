@@ -27,7 +27,7 @@ jobs:
   meta:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: set_tag
@@ -79,7 +79,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -97,7 +97,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -118,7 +118,7 @@ jobs:
           cp README.md artifacts/
           cp LICENSE artifacts/ 2>/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: SimpleGeoServer-win-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
           path: artifacts
@@ -132,7 +132,7 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -157,7 +157,7 @@ jobs:
           rustup target add aarch64-unknown-linux-gnu
 
       - name: Cache Cargo dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -186,7 +186,7 @@ jobs:
           cp README.md artifacts/
           cp LICENSE artifacts/ 2>/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: SimpleGeoServer-linux-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
           path: artifacts
@@ -204,7 +204,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -222,7 +222,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -242,7 +242,7 @@ jobs:
           cp README.md artifacts/
           cp LICENSE artifacts/ 2>/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: SimpleGeoServer-macos-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
           path: artifacts
@@ -252,7 +252,7 @@ jobs:
     needs: [meta, windows, linux, macos]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
 
@@ -268,7 +268,7 @@ jobs:
             fi
           done
 
-      - uses: softprops/action-gh-release@v2.2.2
+      - uses: softprops/action-gh-release@v3.0.1
         with:
           files: assets/*
           tag_name: ${{ needs.meta.outputs.tag }}

@@ -21,26 +21,30 @@ path = "src/lib.rs"
 name = "simple-geo-server"
 path = "src/main.rs"
 
+[build-dependencies]
+serde_json = "1"
+
 [features]
-default = []
 gpu = ["wgpu", "bytemuck"]
 
 [dependencies]
 bytemuck = { version = "1", optional = true }
 clap = { version = "4", features = ["derive"] }
 crs-definitions = "0.5"
-geodesy = "0.13"
+geodesy = { version = "0.15", default-features = false }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
-tower-http = { version = "0.6", features = ["fs", "cors", "compression-gzip", "trace"] }
+tower-http = { version = "0.7", features = ["fs", "cors", "compression-gzip", "trace"] }
 geojson = "1"
-kml = { version = "0.5", features = ["geo-types", "zip"] }
+kml = { version = "0.13", features = ["geo-types", "zip"] }
 shapefile = { version = "0.8", features = ["geo-types"] }
-wkt = "0.11"
+wkt = "0.14"
 tiff = "0.11"
 tracing = "0.1"
-wgpu = { version = "22", optional = true }
+wgpu = { version = "29", optional = true }
 tracing-subscriber = "0.3"
+tracing-log = "0.2"
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
@@ -53,3 +57,7 @@ utoipauto = "0.2"
 quick-xml = { version = "0.40", features = ["serialize"] }
 tempfile = "3"
 webp = "0.3"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

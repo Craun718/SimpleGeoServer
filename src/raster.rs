@@ -58,27 +58,55 @@ pub fn is_nodata(val: f64, nodata: Option<f64>) -> bool {
     }
 }
 
+include!(concat!(env!("OUT_DIR"), "/crs_names.rs"));
+
 pub fn crs_string_from_geo_key(geo_key: &crate::reproject::GeoKeyInfo) -> String {
-    if let Some(model) = geo_key.model_type {
-        match model {
-            1 => {
-                if let Some(proj) = geo_key.projected_type {
-                    format!("EPSG:{}", proj)
-                } else {
-                    "Projected CRS".to_string()
-                }
+    let projected_cs = 1u16;
+    let geographic_cs = 2u16;
+
+    // Try to resolve a human-readable name via the CRS name table first
+    if let Some(name) = crs_name_from_geo_key(geo_key) {
+        return name;
+    }
+
+    // Fallback to EPSG:XXXX format
+    match geo_key.model_type {
+        Some(t) if t == projected_cs => {
+            if let Some(proj) = geo_key.projected_type {
+                format!("EPSG:{}", proj)
+            } else {
+                "Projected CRS".to_string()
             }
-            2 => {
-                if let Some(geo) = geo_key.geographic_type {
-                    format!("EPSG:{}", geo)
-                } else {
-                    "Geographic CRS".to_string()
-                }
-            }
-            _ => "Unknown".to_string(),
         }
-    } else {
-        "Unknown".to_string()
+        Some(t) if t == geographic_cs => {
+            if let Some(geo) = geo_key.geographic_type {
+                format!("EPSG:{}", geo)
+            } else {
+                "Geographic CRS".to_string()
+            }
+        }
+        _ => "Unknown".to_string(),
+    }
+}
+
+fn crs_name_from_geo_key(geo_key: &crate::reproject::GeoKeyInfo) -> Option<String> {
+    match geo_key.model_type? {
+        t if t == 1 => {
+            let epsg = geo_key.projected_type?;
+            crs_name_from_epsg(epsg).map(|s| s.to_string())
+        }
+        t if t == 2 => {
+            let epsg = geo_key.geographic_type?;
+            crs_name_from_epsg(epsg).map(|s| s.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn crs_name_from_epsg(epsg: u16) -> Option<&'static str> {
+    match CRS_NAME_TABLE.binary_search_by_key(&epsg, |(code, _)| *code) {
+        Ok(idx) => Some(CRS_NAME_TABLE[idx].1),
+        Err(_) => None,
     }
 }
 

@@ -1000,7 +1000,7 @@ pub(crate) fn render_raster_tile_cpu_rgba(
     Ok((img.into_raw(), rendered))
 }
 
-pub(crate) fn approximate_tile_affine(
+pub fn approximate_tile_affine(
     raster: &CachedRaster,
     min_x: f64,
     min_y: f64,
