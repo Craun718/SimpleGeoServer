@@ -109,10 +109,6 @@ jobs:
         shell: bash
         run: cargo build --release
 
-      - name: Run tests
-        shell: bash
-        run: cargo test --release
-
       - name: Prepare artifacts
         shell: bash
         run: |
@@ -178,15 +174,6 @@ jobs:
             cargo build --release
           fi
 
-      - name: Run tests
-        shell: bash
-        run: |
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            cargo test --release
-          else
-            echo "Skipping tests on cross-compiled target"
-          fi
-
       - name: Prepare artifacts
         shell: bash
         run: |
@@ -246,10 +233,6 @@ jobs:
       - name: Build
         shell: bash
         run: cargo build --release
-
-      - name: Run tests
-        shell: bash
-        run: cargo test --release
 
       - name: Prepare artifacts
         shell: bash

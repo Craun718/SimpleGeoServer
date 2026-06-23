@@ -1,0 +1,36 @@
+name: Test
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - ".github/workflows/test.yml"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - ".github/workflows/test.yml"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-test-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo test
+      - run: cargo clippy -- -D warnings
+      - run: cargo fmt --check
