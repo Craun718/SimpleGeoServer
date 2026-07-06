@@ -41,7 +41,7 @@ shapefile = { version = "0.8", features = ["geo-types"] }
 wkt = "0.14"
 tiff = "0.11"
 tracing = "0.1"
-wgpu = { version = "29", optional = true }
+wgpu = { version = "30", optional = true }
 tracing-subscriber = "0.3"
 tracing-log = "0.2"
 log = "0.4"
