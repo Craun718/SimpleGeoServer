@@ -54,7 +54,7 @@ image = { version = "0.25", default-features = false, features = ["png", "webp"]
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
 utoipauto = "0.2"
-quick-xml = { version = "0.40", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 tempfile = "3"
 webp = "0.3"
 
