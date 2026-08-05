@@ -2,6 +2,9 @@
 
 [English](README.md) | 中文
 
+> ⚠️ **本项目已归档，不再维护。**
+> 如需功能相近且持续维护的 PostGIS/SQLite 瓦片服务，推荐使用 [maplibre/martin](https://github.com/maplibre/martin)。
+
 SimpleGeoServer 是一个基于 Rust 的 HTTP 服务器，用于同时提供静态文件和地理空间数据服务。它支持栅格与矢量瓦片、OGC 兼容接口，也可以既作为 CLI 程序运行，也可作为 crate 嵌入使用。
 
 ## 特性

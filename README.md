@@ -2,6 +2,9 @@
 
 English | [中文](README.zh.md)
 
+> ⚠️ **This project is archived and no longer maintained.**
+> For an actively maintained PostGIS/SQLite tile server with a similar feature set, we recommend [maplibre/martin](https://github.com/maplibre/martin).
+
 SimpleGeoServer is a Rust HTTP server for static files and geospatial data. It serves raster and vector tiles, exposes OGC-compatible endpoints, and can be used either as a CLI app or embedded as a crate.
 
 ## Features
